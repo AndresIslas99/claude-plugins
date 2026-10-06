@@ -1,0 +1,56 @@
+{
+  "description": "wm working model: model routing, role guards for the wm agents, and the implementer's done-gate",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/session_context.py\""
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Agent|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/agent_gate.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|Edit|MultiEdit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/subagent_guard.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "SubagentHandback",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/done_gate.py\"",
+            "timeout": 1800
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/done_gate.py\"",
+            "timeout": 1800
+          }
+        ]
+      }
+    ]
+  }
+}

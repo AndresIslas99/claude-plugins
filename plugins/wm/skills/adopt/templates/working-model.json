@@ -1,0 +1,21 @@
+{
+  "$comment": "The wm working model's project configuration. Lead-owned: only the lead (the main session) edits it. gates run first, for the changed files their 'when' globs match; tests run only after every gate passes. Globs use gitignore-style ** and are relative to the repository root.",
+  "version": 1,
+  "gates": [
+    { "run": "REPLACE: a fast static check, for example `just lint` or `npm run lint`", "when": ["src/**"] }
+  ],
+  "tests": [
+    { "run": "REPLACE: the test command, for example `just test` or `npm test`", "when": ["src/**", "tests/**"], "timeout": 900 }
+  ],
+  "leadOwned": [
+    "REPLACE: dependency manifests and tool configuration, for example pyproject.toml or package.json",
+    ".github/"
+  ],
+  "denyCommands": [],
+  "paths": {
+    "workOrders": "docs/work-orders",
+    "consults": "docs/consults",
+    "decisions": "docs/adr"
+  },
+  "protectedBranches": ["main"]
+}

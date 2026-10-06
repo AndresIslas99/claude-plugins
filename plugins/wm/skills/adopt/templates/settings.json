@@ -1,0 +1,12 @@
+{
+  "model": "opus",
+  "env": {
+    "CLAUDE_CODE_SUBAGENT_MODEL": "sonnet"
+  },
+  "permissions": {
+    "ask": ["Agent(wm:fable-advisor)"]
+  },
+  "enabledPlugins": {
+    "wm@andres-plugins": true
+  }
+}

@@ -48,9 +48,12 @@ READ_ONLY_GIT = frozenset(
         "version",
     }
 )
-# `git`, then any global options (-C <path>, -c <key=value>, --no-pager, ...), then the subcommand.
+# Subcommands that only read when followed by one of these actions.
+READ_ONLY_ACTIONS = {"stash": frozenset({"list", "show"})}
+# `git`, then any global options (-C <path>, -c <key=value>, --no-pager, ...), then the
+# subcommand and the word after it.
 GIT_INVOCATION = re.compile(
-    r"\bgit((?:\s+-[Cc]\s+\S+|\s+--?[A-Za-z][\w-]*(?:=\S+)?)*)\s+([a-z][a-z-]*)"
+    r"\bgit((?:\s+-[Cc]\s+\S+|\s+--?[A-Za-z][\w-]*(?:=\S+)?)*)\s+([a-z][a-z-]*)(?:\s+(\S+))?"
 )
 
 BASH_RULES = (
@@ -121,9 +124,10 @@ def main() -> int:
 
 def _check_command(command: str, config: dict[str, Any]) -> str | None:
     for match in GIT_INVOCATION.finditer(command):
-        subcommand = match.group(2)
-        if subcommand not in READ_ONLY_GIT:
-            return f"`git {subcommand}` changes the repository; version control is the lead's."
+        subcommand, action = match.group(2), match.group(3)
+        if subcommand in READ_ONLY_GIT or action in READ_ONLY_ACTIONS.get(subcommand, ()):
+            continue
+        return f"`git {subcommand}` changes the repository; version control is the lead's."
     for pattern, reason in BASH_RULES:
         if re.search(pattern, command):
             return reason

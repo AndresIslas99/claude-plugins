@@ -6,11 +6,11 @@ A personal marketplace of Claude Code plugins.
 |---|---|
 | [`wm`](plugins/wm/README.md) | A working model: Opus leads and decides, Sonnet implements precise work orders, Opus reviews, Fable advises on the hardest problems with the user's approval, and Haiku searches. Hooks enforce each project's gates and every agent's limits. |
 
-Install it on this machine:
+Install it from GitHub, which needs access to this private repository, or from a local clone:
 
 ```bash
-claude plugin marketplace add ~/Documents/Personal/Code/claude-plugins
+claude plugin marketplace add AndresIslas99/claude-plugins   # or the path of a clone
 claude plugin install wm@andres-plugins
 ```
 
-Run every plugin's tests with `just test`.
+`just test` runs every plugin's hook tests, `just validate` checks the manifests, and `just eval` runs wm's eval cases in real sessions.

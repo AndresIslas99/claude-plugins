@@ -8,13 +8,15 @@
   "plugins": [
     {
       "name": "wm",
-      "description": "Working model: Opus leads and decides, Sonnet implements precise work orders, Opus reviews, Fable advises on the hardest problems with the user's approval, Haiku searches. Hooks enforce the project's gates and each agent's limits.",
-      "version": "2.2.0",
+      "description": "Working model: Opus leads, decides and writes decided code behind a commit gate; Sonnet takes work orders when delegating pays; Opus reviews risky changes; Fable advises on the hardest problems with the user's approval; Haiku searches. Hooks enforce each project's gates and every agent's limits.",
+      "version": "2.2.1",
       "author": {
         "name": "Andres Islas"
       },
       "source": "./plugins/wm",
-      "category": "development"
+      "category": "development",
+      "homepage": "https://github.com/AndresIslas99/claude-plugins/tree/main/plugins/wm",
+      "license": "MIT"
     }
   ]
 }

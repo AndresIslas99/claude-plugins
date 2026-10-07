@@ -180,3 +180,7 @@ Some things to know about `claude plugin eval`:
 - **On macOS, agents' own git commands fail inside the eval sandbox.** The sandbox blocks the cache that `/usr/bin/git`'s xcrun shim writes. The hooks run outside the sandbox and aren't affected.
 
 Bump `version` in `.claude-plugin/plugin.json` and in the marketplace entry with every change, then run `claude plugin marketplace update` and `claude plugin update`. [CHANGELOG.md](CHANGELOG.md) lists the changes.
+
+## License
+
+[MIT](../../LICENSE).

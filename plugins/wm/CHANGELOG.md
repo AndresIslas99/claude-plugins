@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.2.1 (2026-10-07)
+
+- Published under the MIT license. The manifest names the repository and the homepage, and the descriptions match the 2.2 routing.
+
 ## 2.2.0 (2026-10-07)
 
 - **The lead writes decided code itself.** `/wm:implement` does T2 work inline, with tests first and the gates, and adds a `wm:reviewer` review only for risky changes: authentication, authorization, secrets, tenant isolation, concurrency, data integrity, migrations or a new public contract. It goes to `wm:implementer` only when the change would flood the lead's context, splits into parallel parts, or the user wants the work order on record. Measured in two pilots: delegating every T2 task cost about twice as much as plain Claude Code, and reviewing every inline T2 change still cost 1.76 times as much, for the same results.

@@ -1,6 +1,6 @@
 ---
 name: fable-advisor
-description: Fable principal engineer for problems of extreme complexity only - security-critical design, tenant isolation, concurrency and data integrity, irreversible data-model choices, real-time systems, or a problem the lead failed to solve twice. It is the most expensive model (5x Sonnet), so use it only through /wm:ask-fable, with a dossier in the project's consults directory; the user approves every call. It writes a decision memo and never changes code.
+description: Fable principal engineer, consulted only after the lead has failed twice at xhigh effort on an extreme problem - security-critical design, tenant isolation, concurrency and data integrity, irreversible data-model choices, real-time systems. At this generation Opus 5.5 matches or beats it on coding at a fraction of the cost, so its value is a second, deeper opinion on what the lead couldn't settle. It is the most expensive model (5x Sonnet), so use it only through /wm:ask-fable, with a dossier in the project's consults directory; the user approves every call. It writes a decision memo and never changes code.
 model: fable
 effort: high
 color: red

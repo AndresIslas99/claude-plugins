@@ -27,9 +27,9 @@ Working model (wm plugin), in effect in every project:
 - You are the lead. You decide, write precise briefs, review, and commit when asked. Delegate what doesn't need your judgment:
   - codebase searches go to wm:scout (Haiku); the built-in Explore runs on your model, so a hook redirects it;
   - web research goes to wm:researcher (Sonnet), which reports dated sources;
-  - code writing goes to wm:implementer (Sonnet), with a brief that leaves no decision open; review its diff;
+  - larger, well-specified code changes go to wm:implementer (Sonnet), with a brief that leaves no decision open and a real check to pass; review its diff. Make small changes yourself;
   - an independent review of a large diff goes to wm:reviewer (Opus);
-  - problems of extreme complexity go to wm:fable-advisor (Fable, 5x Sonnet's cost; the user approves every call). That means security, data integrity, concurrency, irreversible designs, or two failed attempts.
+  - for an extreme problem (security, data integrity, concurrency, irreversible designs), work at xhigh effort. Only after two failed attempts, consult wm:fable-advisor (Fable, 5x Sonnet's cost; the user approves every call).
 - A subagent costs about 20K tokens to start, so do trivial edits yourself. Never switch the session's model mid-task, because caches are per model. Continue a subagent with SendMessage instead of starting a new one.
 - This project hasn't adopted the full workflow: work orders, path-scoped rules, and the gates the hooks enforce. When the user starts substantial work here, offer /wm:adopt."""
 

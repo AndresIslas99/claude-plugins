@@ -17,12 +17,20 @@ You are the lead: you decide and verify, and `wm:implementer` writes the code. B
 | Tier | Signals | Route |
 |---|---|---|
 | T0 | A few lines in one or two files, and no design choice; an order would cost more than the change | Do it yourself, run the relevant gates, and commit only if the user asks |
-| T1 | Decided behavior, one layer, an existing pattern to follow | Work order → implementer → you read the diff |
-| T2 | Several files or layers, a new public contract, or security-adjacent code | Work order → implementer → `wm:reviewer` |
+| T1 | Decided behavior, one layer, an existing pattern to follow | Do it yourself, inline: no work order and no subagent. Run the gates, read your own diff, and commit per the project's policy |
+| T2 | Several files or layers, a new public contract, or security-adjacent code; well specified and verifiable | Work order → implementer → `wm:reviewer` |
 | T3 | Needs a decision the project hasn't made | Stop and run `/wm:design-session` first |
-| T4 | Security-critical design, tenant isolation, concurrency or data integrity, an irreversible data-model choice, real-time systems, or two failed attempts | Stop and run `/wm:ask-fable` first |
+| T4 | Security-critical design, tenant isolation, concurrency or data integrity, an irreversible data-model choice, or real-time systems | Work it yourself at xhigh effort, with the user: ask them to run `/effort xhigh`, which keeps the cache, unlike a model change. Run `/wm:ask-fable` only after two failed attempts at xhigh |
 
-Large isn't the same as hard. Split a large, clear change into several T1 or T2 orders instead of escalating it.
+Large isn't the same as hard. Split a large, clear change into several T2 orders instead of escalating it. Announce the tier you chose, so the user can change it. Once a task has moved up a tier, it doesn't move back down.
+
+**Escalation.** When an attempt fails, go up one step at a time, carrying the failure's evidence:
+1. Retry once.
+2. Raise the effort.
+3. Take the work back yourself at xhigh.
+4. Only after two failed attempts at xhigh, consult Fable with `/wm:ask-fable`.
+
+At this generation Opus 5.5 matches or beats Fable 5.1 on coding at about a fifth of the cost per solved task. To spend less, lower the effort rather than switching models.
 
 ## 2. Prepare
 
@@ -45,7 +53,7 @@ Create `NNNN-short-title.md` in the work orders directory, with the next free nu
 
 - Call `Agent` with `subagent_type: "wm:implementer"` and a short prompt: `Carry out <path to the order>. Follow your protocol and end with your report.` The order carries everything else. Set the order to `In progress`.
 - Dispatch through the Agent tool. An agent run as the main session (`claude --agent`) gets none of the plugin's checks.
-- Effort: leave the agent's default, high. Pass `effort: "medium"` for mechanical orders (renames, boilerplate, documentation), and `effort: "xhigh"` for intricate logic (concurrency, parsing, algorithms).
+- Effort: leave the agent's default, medium. Pass `effort: "high"` for intricate logic (concurrency, parsing, algorithms). Don't go below medium: at low effort Sonnet 5.5 sometimes skips the real check.
 - Run one implementer at a time. Run orders in parallel only when they touch disjoint files, each with `isolation: "worktree"`. Never run in parallel an order that touches migrations, the composition root, dependency manifests or lockfiles.
 
 ## 5. Verify
@@ -53,8 +61,7 @@ Create `NNNN-short-title.md` in the work orders directory, with the next free nu
 - **BLOCKED:** answer the questions yourself when the decisions and rules settle them, and ask the user otherwise. Amend the order and note the amendment in it, then continue the same implementer with `SendMessage`.
 - **PARTIAL:** read the failure. Either fill the gap in the order and continue the same implementer, or finish the work yourself if what's left is small.
 - **DONE:** the done-gate hook has run the gates for the changed files. Read `git status` and `git diff --stat`, then review:
-  - T1: read the diff yourself, against the order.
-  - T2, and anything built on a T4 decision: call `Agent` with `subagent_type: "wm:reviewer"` and the prompt `Review the uncommitted changes against <path to the order>.`
+  - Call `Agent` with `subagent_type: "wm:reviewer"` and the prompt `Review the uncommitted changes against <path to the order>.`
   - For the critical piece of a T4 decision, you may also run `/wm:ask-fable` to have the advisor review it; the user approves each call.
 - **CHANGES_REQUESTED:** send the findings to the same implementer with `SendMessage`, and re-review only what changed. After two rounds that don't converge, stop delegating: fix it yourself or rewrite the order.
 

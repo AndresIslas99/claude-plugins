@@ -1,6 +1,6 @@
 ---
 name: ask-fable
-description: Consult wm:fable-advisor, the most capable model at 5x Sonnet's cost, on a problem of extreme complexity. Works through a self-contained dossier in the project's consults directory, then turns the advisor's memo into a decision with the user. Use it only when the T4 criteria hold; the user approves every call.
+description: Consult wm:fable-advisor, the most capable model at 5x Sonnet's cost, on a problem of extreme complexity. Works through a self-contained dossier in the project's consults directory, then turns the advisor's memo into a decision with the user. Use it only after the lead has failed twice at xhigh effort on a T4 problem; the user approves every call.
 argument-hint: "<problem>"
 ---
 
@@ -10,8 +10,8 @@ This project's configuration (`.claude/working-model.json`):
 
 !`cat "${CLAUDE_PROJECT_DIR}/.claude/working-model.json" 2>/dev/null || echo "None: consults go to docs/consults/ by default."`
 
-1. **Check the criteria.** The problem must be T4: security-critical design, tenant isolation, concurrency or data integrity, an irreversible data-model choice, real-time systems, or something you have failed to solve twice. If it isn't T4, say so and solve it yourself: large or tedious isn't the same as hard.
-2. **Write the dossier.** Create `NNNN-short-title.md` in the consults directory (`paths.consults`, by default `docs/consults`), with the next free number, from the `template.md` there, and give it the status `Open`. The advisor knows nothing of this conversation, so the dossier must stand on its own. Keep it lean: point to `path:line` and decision records instead of pasting code, and say exactly what form of answer you need.
+1. **Check the criteria.** The problem must be T4: security-critical design, tenant isolation, concurrency or data integrity, an irreversible data-model choice, or real-time systems. You must also have failed twice at xhigh effort, meaning two attempts whose result didn't hold up under tests, review or the user's scrutiny. If either condition fails, say so and keep working at your level. Large, tedious or important isn't the same as hard, and at this generation Opus 5.5 matches or beats Fable 5.1 on coding at about a fifth of the cost per solved task.
+2. **Write the dossier.** Create `NNNN-short-title.md` in the consults directory (`paths.consults`, by default `docs/consults`), with the next free number, from the `template.md` there, and give it the status `Open`. The advisor knows nothing of this conversation, so the dossier must stand on its own. Keep it lean: point to `path:line` and decision records instead of pasting code, and say exactly what form of answer you need. Its "Current state" section shows both failed attempts and why each one failed.
 3. **Call the advisor.** Call `Agent` with `subagent_type: "wm:fable-advisor"` and a `description` that tells the user what they're approving. Use the prompt `Read the dossier in <path>, write your memo in its Memo section, and reply with a summary of at most ten lines.`
    - The user is asked to approve the call. If they decline, continue without the advisor and say what is at risk.
    - The effort defaults to high. Pass `effort: "xhigh"` for security or integrity proofs.

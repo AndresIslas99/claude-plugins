@@ -37,3 +37,5 @@ printf '{"version": 1, "gates": [{"run": "python3 fake_lint.py", "when": ["src/*
 git init -q
 git add .
 git -c user.email=eval@example.com -c user.name=eval commit -q -m base
+# This case's own change, left uncommitted: the lint rejects print() in src/.
+printf 'def show_total(total):\n    print(f"Total: {total}")\n' > src/report.py

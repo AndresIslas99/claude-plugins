@@ -23,6 +23,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import wm_config
+import wm_git
 import wm_runtime
 
 # Git subcommands that only read. Every other subcommand changes the repository or a remote.
@@ -53,10 +54,6 @@ READ_ONLY_GIT = frozenset(
 READ_ONLY_ACTIONS = {"stash": frozenset({"list", "show"})}
 # `git`, then any global options (-C <path>, -c <key=value>, --no-pager, ...), then the
 # subcommand and the word after it.
-GIT_INVOCATION = re.compile(
-    r"\bgit((?:\s+-[Cc]\s+\S+|\s+--?[A-Za-z][\w-]*(?:=\S+)?)*)\s+([a-z][a-z-]*)(?:\s+(\S+))?"
-)
-
 BASH_RULES = (
     (r"--no-verify\b", "Git hooks are quality gates and are never skipped."),
     (r"\bcore\.hooksPath\b", "Git hooks are quality gates and are never redirected."),
@@ -121,7 +118,7 @@ def _role(payload: dict[str, Any]) -> str | None:
 
 
 def check_command(command: str, config: dict[str, Any]) -> str | None:
-    for match in GIT_INVOCATION.finditer(command):
+    for match in wm_git.INVOCATION.finditer(command):
         subcommand, action = match.group(2), match.group(3)
         if subcommand in READ_ONLY_GIT or action in READ_ONLY_ACTIONS.get(subcommand, ()):
             continue

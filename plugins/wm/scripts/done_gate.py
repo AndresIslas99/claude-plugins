@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
 import sys
 import time
 from collections import Counter
@@ -39,14 +38,12 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import wm_checks
 import wm_config
 import wm_git
 import wm_runtime
 
 MAX_BLOCKS = 2
-TAIL_LINES = 30
-DEFAULT_TIMEOUT_SECONDS = 600
-EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
 STATUS = re.compile(r"^\W*STATUS:\W*(DONE|BLOCKED|PARTIAL)\b", re.MULTILINE | re.IGNORECASE)
 
@@ -181,7 +178,7 @@ def evaluate(root: Path, agent: str, message: str, status: str | None) -> Result
             "The implementer's starting snapshot was missing, so its changes were compared with HEAD."
         )
         base = None
-    base = base or wm_git.head_tree(root) or EMPTY_TREE
+    base = base or wm_git.head_tree(root) or wm_git.EMPTY_TREE
     current = wm_git.snapshot(root)
     if current is None:
         result.integrity.append(
@@ -204,7 +201,9 @@ def evaluate(root: Path, agent: str, message: str, status: str | None) -> Result
             "(STATUS: DONE | BLOCKED | PARTIAL, then SUMMARY, FILES, ...)."
         )
     if status not in ("BLOCKED", "PARTIAL") and changed:
-        _run_gates(root, [path for _, path in changed], config, result)
+        checked, failures = wm_checks.run(root, [path for _, path in changed], config)
+        result.checked += checked
+        result.quality += failures
     return result
 
 
@@ -263,58 +262,6 @@ def _integrity(
         result.warnings.append(
             "Test files that lost more assertions than they gained: " + ", ".join(thinner[:10])
         )
-
-
-def _applicable(entries: list[dict[str, Any]], changed: list[str]) -> list[dict[str, Any]]:
-    """The entries whose `when` globs match a changed file; an entry without `when` always runs."""
-    result = []
-    for entry in entries:
-        globs = [g for g in entry.get("when") or [] if isinstance(g, str)]
-        if not globs or any(wm_config.matches(p, g) for p in changed for g in globs):
-            result.append(entry)
-    return result
-
-
-def _run_gates(root: Path, changed: list[str], config: dict[str, Any], result: Result) -> None:
-    deadline = time.monotonic() + config["gateBudgetSeconds"]
-    for group in ("gates", "tests"):  # the slow checks run only when the fast ones pass
-        for entry in _applicable(config[group], changed):
-            remaining = int(deadline - time.monotonic())
-            if remaining < 5:
-                result.quality.append(
-                    f"The checks ran out of their {config['gateBudgetSeconds']}-second budget "
-                    f"before `{entry['run']}` (gateBudgetSeconds in .claude/working-model.json)."
-                )
-                return
-            failure = _run(root, entry, remaining)
-            result.checked.append(str(entry["run"]))
-            if failure:
-                result.quality.append(failure)
-        if result.quality:
-            return
-
-
-def _run(root: Path, entry: dict[str, Any], remaining: int) -> str | None:
-    command = str(entry["run"])
-    own = entry.get("timeout") if isinstance(entry.get("timeout"), int) else DEFAULT_TIMEOUT_SECONDS
-    timeout = max(1, min(own, remaining))
-    try:
-        completed = subprocess.run(
-            ["bash", "-c", command],
-            cwd=root,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
-        )
-    except subprocess.TimeoutExpired:
-        return f"`{command}` didn't finish within {timeout} seconds."
-    except OSError as error:
-        return f"`{command}` couldn't run: {error}"
-    if completed.returncode == 0:
-        return None
-    output = (completed.stdout + completed.stderr).strip().splitlines()[-TAIL_LINES:]
-    return f"`{command}` failed:\n" + "\n".join(output)
 
 
 def _verdict(

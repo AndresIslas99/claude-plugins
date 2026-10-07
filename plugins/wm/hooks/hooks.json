@@ -1,5 +1,5 @@
 {
-  "description": "wm working model: model routing, role guards for the wm agents, the implementer's diff-based done-gate, and verdicts for the lead. Every hook runs through launch.sh, which applies its failure policy: gates fail closed, the rest fail open with a receipt.",
+  "description": "wm working model: model routing, role guards for the wm agents, the implementer's diff-based done-gate, the lead's commit gate, and verdicts for the lead. Every hook runs through launch.sh, which applies its failure policy: gates fail closed, the rest fail open with a receipt.",
   "hooks": {
     "SessionStart": [
       {
@@ -42,6 +42,16 @@
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/launch.sh\" open subagent_guard.py",
             "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "^Bash$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/launch.sh\" open commit_gate.py",
+            "timeout": 1800
           }
         ]
       },

@@ -32,10 +32,12 @@ SCRIPTS = (
     "wm_runtime.py",
     "wm_config.py",
     "wm_git.py",
+    "wm_checks.py",
     "agent_gate.py",
     "subagent_guard.py",
     "baseline.py",
     "done_gate.py",
+    "commit_gate.py",
     "agent_report.py",
     "session_context.py",
 )
@@ -177,7 +179,8 @@ def _gate_report(group: str, entry: dict[str, Any], tracked: list[str]) -> list[
                 f"! {group}: `{command}`: its globs {globs} match no tracked file, so it never runs."
             )
         else:
-            lines.append(f"✓ {group}: `{command}` covers {hits} tracked files")
+            files = "file" if hits == 1 else "files"
+            lines.append(f"✓ {group}: `{command}` covers {hits} tracked {files}")
     else:
         lines.append(f"✓ {group}: `{command}` runs on every change")
     return lines

@@ -4,9 +4,9 @@
 set -euo pipefail
 mkdir -p src tools .claude
 printf "VALUE = 1\n" > src/app.py
-printf "def freight_rate(miles: int, rate_per_mile: int) -> int:\n    return miles * rate_per_mile\n" > src/rates.py
+printf "def transfer_rate(gigabytes: int, rate_per_gb: int) -> int:\n    return gigabytes * rate_per_gb\n" > src/rates.py
 printf "# Demo  \n\nThe lead owns this file.  \n" > CLAUDE.md
-printf "# Docks  \n\nPlease recieve the shipment at the dock.  \n" > README.md
+printf "# Backups  \n\nPlease recieve the backup in the archive.  \n" > README.md
 cat > fake_lint.py <<'EOF'
 import pathlib, sys
 problems = []

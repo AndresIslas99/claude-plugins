@@ -9,7 +9,7 @@ test:
     #!/usr/bin/env bash
     set -euo pipefail
     cd plugins/wm/tests
-    for suite in test_launcher test_manifest test_guards test_agent_report test_done_gate; do
+    for suite in test_launcher test_manifest test_guards test_agent_report test_done_gate test_commit_gate; do
         "${WM_PYTHON:-python3}" "$suite.py"
     done
 

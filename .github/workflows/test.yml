@@ -40,7 +40,7 @@ jobs:
           export WM_PYTHON
           "$WM_PYTHON" --version
           cd plugins/wm/tests
-          for suite in test_launcher test_manifest test_guards test_agent_report test_done_gate; do
+          for suite in test_launcher test_manifest test_guards test_agent_report test_done_gate test_commit_gate; do
             "$WM_PYTHON" "$suite.py"
           done
 

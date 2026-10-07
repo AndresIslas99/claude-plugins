@@ -9,11 +9,21 @@ catches every change, whichever tool made it: Edit, Write, `sed -i`, a heredoc o
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import tempfile
 from collections.abc import Iterator
 from pathlib import Path
+
+# git's empty tree, the base when a repository has no commits yet.
+EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
+# A git invocation inside a shell command: its global options (-C, -c and flags), its subcommand
+# and the subcommand's first argument.
+INVOCATION = re.compile(
+    r"\bgit((?:\s+-[Cc]\s+\S+|\s+--?[A-Za-z][\w-]*(?:=\S+)?)*)\s+([a-z][a-z-]*)(?:\s+(\S+))?"
+)
 
 
 def _timeout() -> float:

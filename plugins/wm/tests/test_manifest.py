@@ -64,6 +64,7 @@ def main() -> int:
             "agent_gate.py",
             "subagent_guard.py",
             "done_gate.py",
+            "commit_gate.py",
             "agent_report.py",
         },
     )

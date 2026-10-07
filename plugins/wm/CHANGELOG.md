@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.2.0 (2026-10-07)
+
+- **The lead writes decided code itself.** `/wm:implement` does T2 work inline, with tests first and the gates, and adds a `wm:reviewer` review only for risky changes: authentication, authorization, secrets, tenant isolation, concurrency, data integrity, migrations or a new public contract. It goes to `wm:implementer` only when the change would flood the lead's context, splits into parallel parts, or the user wants the work order on record. Measured in two pilots: delegating every T2 task cost about twice as much as plain Claude Code, and reviewing every inline T2 change still cost 1.76 times as much, for the same results.
+- **The lead can't commit while the project's checks fail.** A new hook, `commit_gate.py`, runs the gates and then the tests on the lead's `git commit`, and denies it with their output if they fail.
+- The reviewer reviews a request as well as a work order, and the done-gate and the commit gate share their check runner (`wm_checks.py`).
+
 ## 2.1.0 (2026-10-07)
 
 - **The done-gate catches commits the guard can't see.** If HEAD moved while the implementer worked, for example through a commit a script made, that is an integrity failure.

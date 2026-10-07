@@ -33,7 +33,7 @@ Present the proposal and use AskUserQuestion for the real choices:
 - **Lead-owned files:** dependency manifests, tool and gate configuration, CI workflows, deployment and secrets. `CLAUDE.md`, `.claude/`, lockfiles, `.env` files and the three directories below are lead-owned already.
 - **Directories:** work orders, consults and decision records. The defaults are `docs/work-orders`, `docs/consults` and `docs/adr`; set `decisions` to null if the project keeps no decision records. If it keeps none, offer to start them.
 - **Protected branches:** those that deploy or that nobody commits to directly.
-- **Commits:** whether the lead commits each approved work order, or only proposes the commit.
+- **Commits:** whether the lead commits each approved change, or only proposes the commit.
 - **Destructive commands** specific to this project (database resets, VM rebuilds), to add to `denyCommands`.
 
 ## 3. Write

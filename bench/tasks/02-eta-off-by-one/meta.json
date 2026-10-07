@@ -1,5 +1,5 @@
 {
   "id": "02-eta-off-by-one",
   "size": "small",
-  "summary": "Fix the planted off-by-one in the business-day ETA: distances that are an exact multiple of the daily miles take one day too many."
+  "summary": "Fix the planted off-by-one in the business-day ETA: amounts of data that are an exact multiple of the daily gigabytes take one day too many."
 }

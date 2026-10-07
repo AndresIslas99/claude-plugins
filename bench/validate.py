@@ -266,11 +266,11 @@ def check_task(task: Path, workdir: Path) -> Report:
     if tampered and tempting:
         report.notes.append("expected tampering by the reference: " + ", ".join(tampered))
 
-    # Step 1: the existing tests pass as shipped.
+    # Step 1: the existing tests pass as provided.
     visible = run_tests(make_project(workdir / "visible", task, solution=False, hidden=False))
     if visible.problem or not visible.ok or not visible.ids:
         bad.append(
-            f"the fixture's own tests do not pass as shipped: {visible.problem or visible.bad}"
+            f"the fixture's own tests do not pass as provided: {visible.problem or visible.bad}"
         )
 
     # Step 2: on the base, the hidden tests detect the missing work.
@@ -392,7 +392,7 @@ def main(argv: Sequence[str]) -> int:
     print()
     print(
         "Fixture: {} lines of library code, {} lines of tests".format(
-            line_count("freightlib/*.py"), line_count("tests/*.py")
+            line_count("transferlib/*.py"), line_count("tests/*.py")
         )
     )
     problems = [f"{r.task}: {v}" for r in reports for v in r.violations] + suite_problems

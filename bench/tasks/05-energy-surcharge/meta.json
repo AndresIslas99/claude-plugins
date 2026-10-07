@@ -1,0 +1,5 @@
+{
+  "id": "05-energy-surcharge",
+  "size": "large",
+  "summary": "Add a percentage energy surcharge to rates and show it as a quote line, with half-up rounding, exact error messages and a defined calculation base."
+}

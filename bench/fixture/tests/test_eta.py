@@ -1,11 +1,11 @@
 import unittest
 from datetime import date
 
-from freightlib.eta import (
+from transferlib.eta import (
     add_business_days,
     estimate_delivery,
     is_business_day,
-    transit_business_days,
+    transfer_business_days,
 )
 
 MONDAY = date(2024, 3, 4)
@@ -46,30 +46,30 @@ class AddBusinessDaysTests(unittest.TestCase):
             add_business_days(MONDAY, -1)
 
 
-class TransitBusinessDaysTests(unittest.TestCase):
-    def test_short_trip_takes_one_day(self) -> None:
-        self.assertEqual(transit_business_days(120), 1)
+class TransferBusinessDaysTests(unittest.TestCase):
+    def test_small_transfer_takes_one_day(self) -> None:
+        self.assertEqual(transfer_business_days(120), 1)
 
     def test_partly_used_day_counts_as_a_whole_day(self) -> None:
-        self.assertEqual(transit_business_days(650), 2)
+        self.assertEqual(transfer_business_days(650), 2)
 
     def test_service_changes_the_speed(self) -> None:
-        self.assertEqual(transit_business_days(900, "bulk"), 3)
-        self.assertEqual(transit_business_days(1600, "expedited"), 3)
+        self.assertEqual(transfer_business_days(900, "bulk"), 3)
+        self.assertEqual(transfer_business_days(1600, "priority"), 3)
 
     def test_input_is_validated(self) -> None:
-        with self.assertRaisesRegex(ValueError, "miles must be positive"):
-            transit_business_days(0)
-        with self.assertRaisesRegex(ValueError, "unknown service: air"):
-            transit_business_days(100, "air")
+        with self.assertRaisesRegex(ValueError, "gigabytes must be positive"):
+            transfer_business_days(0)
+        with self.assertRaisesRegex(ValueError, "unknown service: tape"):
+            transfer_business_days(100, "tape")
 
 
 class EstimateDeliveryTests(unittest.TestCase):
-    def test_midweek_pickup(self) -> None:
+    def test_midweek_start(self) -> None:
         self.assertEqual(estimate_delivery(MONDAY, 650), date(2024, 3, 6))
 
     def test_delivery_skips_the_weekend(self) -> None:
         self.assertEqual(estimate_delivery(THURSDAY, 650), NEXT_MONDAY)
 
-    def test_expedited_service(self) -> None:
-        self.assertEqual(estimate_delivery(MONDAY, 1600, "expedited"), THURSDAY)
+    def test_priority_service(self) -> None:
+        self.assertEqual(estimate_delivery(MONDAY, 1600, "priority"), THURSDAY)

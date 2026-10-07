@@ -45,7 +45,7 @@ FAILURE = re.compile(r"^(?:FAIL|ERROR): (\w+) \(([\w.]+)\)", re.MULTILINE)
 TEST_LINE = re.compile(r"\s*(?:def test\w*\(|assert\b|self\.assert\w*\(|with self\.assertRaises)")
 WM_CONFIG = {
     "version": 1,
-    "gates": [{"run": TEST_COMMAND, "when": ["freightlib/**", "tests/**"]}],
+    "gates": [{"run": TEST_COMMAND, "when": ["transferlib/**", "tests/**"]}],
     "leadOwned": [],
     "paths": {"workOrders": "docs/work-orders", "consults": "docs/consults", "decisions": None},
 }
@@ -114,7 +114,9 @@ def prepare(task: Path, arm: str, workspace: Path) -> str:
             .replace("{{DECISIONS}}", "the task description")
         )
         claude_md = workspace / "CLAUDE.md"
-        intro = f"# freightlib\n\nA small freight library. Run the tests with `{TEST_COMMAND}`.\n\n"
+        intro = (
+            f"# transferlib\n\nA small transfer library. Run the tests with `{TEST_COMMAND}`.\n\n"
+        )
         claude_md.write_text(intro + section)
         for name in ("work-orders", "consults"):
             directory = workspace / "docs" / name

@@ -1,5 +1,0 @@
-{
-  "id": "06-second-carrier-format",
-  "size": "large",
-  "summary": "Parse a second carrier's key=value message format into the existing dataclass, with strict time handling, ordered error rules and a format-dispatching batch parser."
-}

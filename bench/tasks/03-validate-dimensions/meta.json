@@ -1,5 +1,0 @@
-{
-  "id": "03-validate-dimensions",
-  "size": "small",
-  "summary": "Add a box dimension validator that raises ValueError with specified messages, in a specified check order, including NaN and infinity."
-}

@@ -1,45 +1,45 @@
 import unittest
 
-from freightlib import units
+from transferlib import units
 
 
-class WeightTests(unittest.TestCase):
-    def test_lb_to_kg(self) -> None:
-        self.assertEqual(units.lb_to_kg(100), 45.3592)
+class GigabyteTests(unittest.TestCase):
+    def test_gb_to_gib(self) -> None:
+        self.assertEqual(units.gb_to_gib(100), 93.1323)
 
-    def test_kg_to_lb(self) -> None:
-        self.assertEqual(units.kg_to_lb(10), 22.0462)
+    def test_gib_to_gb(self) -> None:
+        self.assertEqual(units.gib_to_gb(10), 10.7374)
 
     def test_zero_is_allowed(self) -> None:
-        self.assertEqual(units.lb_to_kg(0), 0.0)
-        self.assertEqual(units.kg_to_lb(0), 0.0)
+        self.assertEqual(units.gb_to_gib(0), 0.0)
+        self.assertEqual(units.gib_to_gb(0), 0.0)
 
-    def test_negative_weight_raises(self) -> None:
-        with self.assertRaisesRegex(ValueError, "pounds must not be negative"):
-            units.lb_to_kg(-1)
-        with self.assertRaisesRegex(ValueError, "kilograms must not be negative"):
-            units.kg_to_lb(-0.5)
-
-
-class VolumeTests(unittest.TestCase):
-    def test_cubic_feet_to_cubic_meters(self) -> None:
-        self.assertEqual(units.cubic_feet_to_cubic_meters(100), 2.8317)
-
-    def test_cubic_meters_to_cubic_feet(self) -> None:
-        self.assertEqual(units.cubic_meters_to_cubic_feet(1), 35.3147)
-
-    def test_negative_volume_raises(self) -> None:
-        with self.assertRaisesRegex(ValueError, "cubic feet must not be negative"):
-            units.cubic_feet_to_cubic_meters(-1)
+    def test_negative_size_raises(self) -> None:
+        with self.assertRaisesRegex(ValueError, "gigabytes must not be negative"):
+            units.gb_to_gib(-1)
+        with self.assertRaisesRegex(ValueError, "gibibytes must not be negative"):
+            units.gib_to_gb(-0.5)
 
 
-class DimensionalWeightTests(unittest.TestCase):
+class TerabyteTests(unittest.TestCase):
+    def test_tb_to_tib(self) -> None:
+        self.assertEqual(units.tb_to_tib(100), 90.9495)
+
+    def test_tib_to_tb(self) -> None:
+        self.assertEqual(units.tib_to_tb(1), 1.0995)
+
+    def test_negative_terabytes_raises(self) -> None:
+        with self.assertRaisesRegex(ValueError, "terabytes must not be negative"):
+            units.tb_to_tib(-1)
+
+
+class BillableSizeTests(unittest.TestCase):
     def test_default_divisor(self) -> None:
-        self.assertEqual(units.dimensional_weight_lb(48, 40, 48), 663.0216)
+        self.assertEqual(units.billable_size_gb(48, 40, 48), 663.0216)
 
     def test_custom_divisor(self) -> None:
-        self.assertEqual(units.dimensional_weight_lb(10, 10, 10, divisor=166), 6.0241)
+        self.assertEqual(units.billable_size_gb(10, 10, 10, divisor=166), 6.0241)
 
-    def test_negative_side_raises(self) -> None:
-        with self.assertRaisesRegex(ValueError, "width must not be negative"):
-            units.dimensional_weight_lb(10, -1, 10)
+    def test_negative_dimension_raises(self) -> None:
+        with self.assertRaisesRegex(ValueError, "columns must not be negative"):
+            units.billable_size_gb(10, -1, 10)

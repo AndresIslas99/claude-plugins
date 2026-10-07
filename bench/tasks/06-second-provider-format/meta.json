@@ -1,0 +1,5 @@
+{
+  "id": "06-second-provider-format",
+  "size": "large",
+  "summary": "Parse a second provider's key=value message format into the existing dataclass, with strict time handling, ordered error rules and a format-dispatching batch parser."
+}

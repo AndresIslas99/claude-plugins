@@ -1,0 +1,5 @@
+{
+  "id": "08-route-consolidation",
+  "size": "large",
+  "summary": "Add a new module that consolidates jobs by route under a batch capacity limit, with a fully specified packing rule, output order, name normalization and error messages."
+}

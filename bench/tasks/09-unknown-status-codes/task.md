@@ -1,4 +1,4 @@
-Carriers keep adding status codes we have never seen. Right now an unknown status code makes `parse_status` raise `ValueError("unknown status code: ...")`, and then `parse_batch` throws away the whole batch. That has to stop: an unknown status code must no longer be an error.
+Providers keep adding status codes we have never seen. Right now an unknown status code makes `parse_status` raise `ValueError("unknown status code: ...")`, and then `parse_batch` throws away the whole batch. That has to stop: an unknown status code must no longer be an error.
 
 - Add a member `UNKNOWN = "??"` to `StatusCode`.
 - Add a field `raw_code: Optional[str] = None` as the last field of `StatusUpdate`.

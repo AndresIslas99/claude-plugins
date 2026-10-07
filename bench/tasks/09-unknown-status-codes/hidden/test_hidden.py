@@ -4,10 +4,10 @@ import dataclasses
 import unittest
 from datetime import datetime
 
-from freightlib import parsing
-from freightlib.parsing import StatusCode, StatusUpdate
+from transferlib import parsing
+from transferlib.parsing import StatusCode, StatusUpdate
 
-TAIL = "|2024-03-04 14:30|Dallas, TX"
+TAIL = "|2024-03-04 14:30|us-east-1, az-a"
 
 
 def fx(code, tail=TAIL):
@@ -16,16 +16,16 @@ def fx(code, tail=TAIL):
 
 class UnknownCodeTests(unittest.TestCase):
     def test_an_unknown_code_is_returned_not_raised(self) -> None:
-        update = parsing.parse_status(fx("ZZ") + "|Held at the gate")
+        update = parsing.parse_status(fx("ZZ") + "|Held in the queue")
         self.assertIs(update.status, StatusCode.UNKNOWN)
         self.assertEqual(update.raw_code, "ZZ")
         self.assertEqual(update.reference, "FX123456")
         self.assertEqual(update.timestamp, datetime(2024, 3, 4, 14, 30))
-        self.assertEqual(update.location, "Dallas, TX")
-        self.assertEqual(update.note, "Held at the gate")
+        self.assertEqual(update.location, "us-east-1, az-a")
+        self.assertEqual(update.note, "Held in the queue")
 
     def test_the_raw_code_is_the_trimmed_text_as_sent(self) -> None:
-        self.assertEqual(parsing.parse_status("FX123456|  Zz9  |2024-03-04 14:30|Dallas, TX").raw_code, "Zz9")
+        self.assertEqual(parsing.parse_status("FX123456|  Zz9  |2024-03-04 14:30|us-east-1, az-a").raw_code, "Zz9")
         self.assertEqual(parsing.parse_status(fx("TOOLONG")).raw_code, "TOOLONG")
 
     def test_matching_is_exact_and_case_sensitive(self) -> None:
@@ -37,9 +37,9 @@ class UnknownCodeTests(unittest.TestCase):
 
     def test_known_codes_have_no_raw_code(self) -> None:
         known = {
-            "PU": StatusCode.PICKED_UP,
-            "IT": StatusCode.IN_TRANSIT,
-            "OD": StatusCode.OUT_FOR_DELIVERY,
+            "PU": StatusCode.PULLED,
+            "IT": StatusCode.IN_TRANSFER,
+            "OD": StatusCode.ON_DISK,
             "DL": StatusCode.DELIVERED,
             "EX": StatusCode.EXCEPTION,
         }
@@ -59,9 +59,9 @@ class UnknownCodeTests(unittest.TestCase):
         fields = dataclasses.fields(StatusUpdate)
         self.assertEqual([f.name for f in fields], ["reference", "status", "timestamp", "location", "note", "raw_code"])
         self.assertIsNone(fields[-1].default)
-        built = StatusUpdate("FX123456", StatusCode.DELIVERED, datetime(2024, 3, 5, 9, 5), "Austin, TX")
+        built = StatusUpdate("FX123456", StatusCode.DELIVERED, datetime(2024, 3, 5, 9, 5), "eu-west-1, az-b")
         self.assertIsNone(built.raw_code)
-        self.assertEqual(parsing.parse_status("FX123456|DL|2024-03-05 09:05|Austin, TX"), built)
+        self.assertEqual(parsing.parse_status("FX123456|DL|2024-03-05 09:05|eu-west-1, az-b"), built)
 
 
 class ErrorsThatRemainTests(unittest.TestCase):
@@ -71,8 +71,8 @@ class ErrorsThatRemainTests(unittest.TestCase):
         self.assertEqual(str(caught.exception), expected)
 
     def test_an_empty_status_field_is_still_an_error(self) -> None:
-        self.assertRejects("FX123456||2024-03-04 14:30|Dallas, TX", "missing status code")
-        self.assertRejects("FX123456|   |2024-03-04 14:30|Dallas, TX", "missing status code")
+        self.assertRejects("FX123456||2024-03-04 14:30|us-east-1, az-a", "missing status code")
+        self.assertRejects("FX123456|   |2024-03-04 14:30|us-east-1, az-a", "missing status code")
 
     def test_the_checks_keep_their_order(self) -> None:
         self.assertRejects("FX123456|ZZ|2024-03-04 14:30", "expected 4 or 5 fields, got 3")
@@ -80,41 +80,41 @@ class ErrorsThatRemainTests(unittest.TestCase):
         self.assertRejects("FX123456||not-a-time|", "missing status code")
         self.assertRejects("FX123456|ZZ|not-a-time|", "invalid timestamp: not-a-time")
         self.assertRejects("FX123456|ZZ|2024-03-04 14:30|", "missing location")
-        self.assertRejects("XX12|ZZ|2024-03-04 14:30|Dallas, TX", "invalid reference: 'XX12'")
+        self.assertRejects("XX12|ZZ|2024-03-04 14:30|us-east-1, az-a", "invalid reference: 'XX12'")
 
     def test_the_other_messages_are_unchanged(self) -> None:
-        self.assertRejects("FX123456|IT|2024-13-04 14:30|Dallas, TX", "invalid timestamp: 2024-13-04 14:30")
+        self.assertRejects("FX123456|IT|2024-13-04 14:30|us-east-1, az-a", "invalid timestamp: 2024-13-04 14:30")
         self.assertRejects("FX123456|IT|2024-03-04 14:30|", "missing location")
-        self.assertRejects("XX12|IT|2024-03-04 14:30|Dallas, TX", "invalid reference: 'XX12'")
+        self.assertRejects("XX12|IT|2024-03-04 14:30|us-east-1, az-a", "invalid reference: 'XX12'")
 
 
 class BatchTests(unittest.TestCase):
     def test_a_batch_keeps_lines_with_unknown_codes(self) -> None:
         text = "\n".join(
             [
-                "FX111111|IT|2024-03-04 14:30|Dallas, TX",
-                "FX222222|ZZ|2024-03-04 15:00|Waco, TX|Odd code",
+                "FX111111|IT|2024-03-04 14:30|us-east-1, az-a",
+                "FX222222|ZZ|2024-03-04 15:00|us-west-2, az-c|Odd code",
                 "",
-                "FX333333|DL|2024-03-05 09:05|Austin, TX",
+                "FX333333|DL|2024-03-05 09:05|eu-west-1, az-b",
             ]
         )
         updates = parsing.parse_batch(text)
         self.assertEqual([u.reference for u in updates], ["FX111111", "FX222222", "FX333333"])
         self.assertEqual(
             [u.status for u in updates],
-            [StatusCode.IN_TRANSIT, StatusCode.UNKNOWN, StatusCode.DELIVERED],
+            [StatusCode.IN_TRANSFER, StatusCode.UNKNOWN, StatusCode.DELIVERED],
         )
         self.assertEqual([u.raw_code for u in updates], [None, "ZZ", None])
 
     def test_a_batch_still_reports_other_bad_lines_with_their_number(self) -> None:
-        text = "FX111111|ZZ|2024-03-04 14:30|Dallas, TX\nFX222222|IT|2024-03-04 15:00\n"
+        text = "FX111111|ZZ|2024-03-04 14:30|us-east-1, az-a\nFX222222|IT|2024-03-04 15:00\n"
         with self.assertRaises(ValueError) as caught:
             parsing.parse_batch(text)
         self.assertEqual(str(caught.exception), "line 2: expected 4 or 5 fields, got 3")
 
     def test_an_empty_status_in_a_batch_names_the_line(self) -> None:
         with self.assertRaises(ValueError) as caught:
-            parsing.parse_batch("FX111111||2024-03-04 14:30|Dallas, TX")
+            parsing.parse_batch("FX111111||2024-03-04 14:30|us-east-1, az-a")
         self.assertEqual(str(caught.exception), "line 1: missing status code")
 
 

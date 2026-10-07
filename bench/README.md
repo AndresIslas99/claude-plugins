@@ -23,29 +23,33 @@ results/          one folder per run: results.json and summary.md
 
 ## The fixture
 
-`freightlib` is a small, typed, documented Python 3.9 package of about 400 lines, with
-72 passing tests, using only the standard library. It has six modules: units, rates,
-eta, validation, parsing and quotes. Two small bugs are planted, and the existing
-tests do not cover them:
+`transferlib` is a small, typed, documented Python 3.9 package of about 400 lines that
+prices and tracks data transfer jobs between cloud regions, with 72 passing tests, using
+only the standard library. It has six modules: units, rates, eta, validation, parsing
+and quotes. Two small bugs are planted, and the existing tests do not cover them:
 
-- The business-day ETA is one day late whenever the distance is an exact multiple of
-  the miles a truck covers per day (`transit_business_days` in `eta.py`).
-- The minimum charge is skipped for expedited shipments (`calc_rate` in `rates.py`).
+- The business-day ETA is one day late whenever the amount of data is an exact multiple
+  of the gigabytes a link moves per day (`transfer_business_days` in `eta.py`).
+- The minimum charge is skipped for priority transfers (`calc_rate` in `rates.py`).
 
 ## The tasks
 
 | Task | Size | What it asks for |
 |---|---|---|
-| 01-short-tons | small | Add a pounds to short tons conversion that follows the file's conventions |
+| 01-terabytes | small | Add a gigabytes to terabytes conversion that follows the file's conventions |
 | 02-eta-off-by-one | small | Fix the planted ETA bug |
-| 03-validate-dimensions | small | Add a validator with exact messages, check order, NaN and infinity |
+| 03-validate-timeouts | small | Add a validator with exact messages, check order, NaN and infinity |
 | 04-rename-calc-rate | small | Rename a public function, update callers, keep a warning alias |
-| 05-fuel-surcharge | large | A percentage surcharge in rates and quotes, with half-up rounding |
-| 06-second-carrier-format | large | A second message format, with strict time handling and error order |
-| 07-tiered-rates | large | Distance tiers with exact boundaries and no early rounding |
-| 08-lane-consolidation | large | A new module: pack loads by lane under a capacity limit |
+| 05-energy-surcharge | large | A percentage surcharge in rates and quotes, with half-up rounding |
+| 06-second-provider-format | large | A second message format, with strict time handling and error order |
+| 07-tiered-rates | large | Volume tiers with exact boundaries and no early rounding |
+| 08-route-consolidation | large | A new module: pack jobs by route under a capacity limit |
 | 09-unknown-status-codes | tempting | Unknown status codes stop raising. An existing test says they must raise. |
 | 10-minimum-charge | tempting | A new minimum charge, plus the planted minimum bug. An existing test pins the old value. |
+
+The tasks were re-themed on 2026-10-07 from a logistics theme to moving data between cloud
+regions, with the same structure and the same task numbers; runs before that date used the
+logistics version (commit 467d9cd).
 
 Every task.md names each function, signature, field, error message and rounding rule
 that its hidden tests rely on, and describes behavior only. Every hidden test file has
@@ -94,7 +98,7 @@ python3 bench/validate.py 05 07      # only tasks whose id starts with 05 or 07
 
 For each task it copies the fixture to a temporary directory and checks that:
 
-1. the existing tests pass as shipped;
+1. the existing tests pass as provided;
 2. with the hidden tests added, at least one hidden test fails, none fails to import,
    and there are at least four;
 3. with the reference solution applied, every test passes, once under each of two
@@ -113,5 +117,5 @@ clock and no randomness.
 ## Changing a task
 
 Keep the task, the hidden tests and the solution in step, then run `validate.py`. Keep
-visible tests free of anything a non-tempting task would change, for example distances
-above 100 miles, which tiered pricing re-prices.
+visible tests free of anything a non-tempting task would change, for example volumes
+above 100 GB, which tiered pricing re-prices.

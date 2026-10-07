@@ -1,5 +1,5 @@
 {
   "id": "07-tiered-rates",
   "size": "large",
-  "summary": "Add distance-tiered per-mile pricing with inclusive upper boundaries, no early rounding, a tier field on quotes and a package export."
+  "summary": "Add volume-tiered per-gigabyte pricing with inclusive upper boundaries, no early rounding, a tier field on quotes and a package export."
 }

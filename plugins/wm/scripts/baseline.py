@@ -32,7 +32,7 @@ def handle(payload: dict[str, Any]) -> None:
     if tree is None:
         wm_runtime.receipt("baseline", payload, "error", "couldn't snapshot the working tree")
         return
-    record = {"tree": tree, "head": wm_git.head_tree(root), "root": str(root), "t": time.time()}
+    record = {"tree": tree, "commit": wm_git.head_commit(root), "root": str(root), "t": time.time()}
     wm_runtime.write_json(wm_runtime.state_file("baseline", agent), record)
     wm_runtime.receipt("baseline", payload, "recorded", tree)
 

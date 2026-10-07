@@ -11,8 +11,9 @@ Two entry points run the same checks (measured 2026-10-07 on Claude Code 2.1.292
 The checks look at the implementer's own changes: the diff between the snapshot baseline.py took
 when it started and the working tree now, or HEAD when there's no snapshot.
 - Integrity is checked whatever the report says, and a failure always sends the implementer
-  back: lead-owned files changed by any tool, new gate suppressions, or check configuration
-  weakened (`|| true`, `continue-on-error`).
+  back: lead-owned files changed by any tool, new gate suppressions, check configuration
+  weakened (`|| true`, `continue-on-error`), or HEAD moved, by a commit, reset or checkout that
+  the guard couldn't see, such as one a script made.
 - Quality is checked when the report claims DONE or has no status: the report's format, then the
   project's gates for the changed files (`gates`, then `tests`, in .claude/working-model.json),
   within a time budget.
@@ -20,7 +21,9 @@ when it started and the working tree now, or HEAD when there's no snapshot.
   assertions than they gained.
 
 The implementer is sent back at most MAX_BLOCKS times; after that the report passes with a
-FAILING verdict. Every outcome is written as a verdict, which agent_report.py hands to the lead.
+FAILING verdict. It passes the same way as soon as the implementer reports BLOCKED or PARTIAL on
+the failures it was last sent back for, because it can't undo them within its limits. Every
+outcome is written as a verdict, which agent_report.py hands to the lead.
 If the checks themselves break, that counts as a failure, so the gate still converges.
 """
 
@@ -104,13 +107,13 @@ def handle(payload: dict[str, Any]) -> None:
     statuses = STATUS.findall(message)  # the last one counts, if the report quotes an earlier one
     status = statuses[-1].upper() if statuses else None
 
-    root = wm_config.repository_root(Path(str(payload.get("cwd") or ".")))
-    if root is None:
-        _verdict(
-            agent, "UNCHECKED", status, Result(), ["not a git repository: nothing was checked"]
-        )
-        return
     try:
+        root = wm_config.repository_root(Path(str(payload.get("cwd") or ".")))
+        if root is None:
+            _verdict(
+                agent, "UNCHECKED", status, Result(), ["not a git repository: nothing was checked"]
+            )
+            return
         result = evaluate(root, agent, message, status)
     except Exception as error:  # noqa: BLE001 - a broken check counts as a failure, so the gate converges
         result = Result()
@@ -126,14 +129,22 @@ def handle(payload: dict[str, Any]) -> None:
         wm_runtime.receipt("done_gate", payload, "pass", outcome, checked=result.checked)
         return
 
+    # A BLOCKED or PARTIAL report on the same failures as the last send-back means the
+    # implementer can't undo them within its limits (a lead-owned file, a commit): it's the lead's.
+    acknowledged = not claims_done and _sent_back_for(agent) == blocking
     blocks = _record_block(agent)
-    if blocks > MAX_BLOCKS:
+    if blocks > MAX_BLOCKS or acknowledged:
         _verdict(agent, "FAILING", status, result, blocking)
         if handback:
             _record_pass(agent)
+        why = (
+            f"reported {status} on failures it can't undo itself"
+            if acknowledged
+            else f"finished with failing checks after {MAX_BLOCKS} retries"
+        )
         warning = (
-            f"wm done-gate: the implementer finished with failing checks after {MAX_BLOCKS} "
-            "retries. The lead has the details; verify before committing."
+            f"wm done-gate: the implementer {why}. The lead has the details; verify before "
+            "committing."
         )
         wm_runtime.receipt("done_gate", payload, "gave-up", "; ".join(blocking)[:400])
         wm_runtime.emit({"systemMessage": warning})
@@ -145,8 +156,13 @@ def handle(payload: dict[str, Any]) -> None:
         "Fix the causes without suppressing them, then end with your report again. If you can't, "
         "report STATUS: PARTIAL (or BLOCKED) with the failing output."
         if claims_done
-        else "Revert those changes, then end with your report again."
+        else "Undo those changes, then end with your report again."
     )
+    if result.integrity:
+        advice += (
+            " If undoing a change would break your limits, as with a lead-owned file or a commit, "
+            "leave it and report STATUS: BLOCKED naming it: the lead takes it from there."
+        )
     reason = f"Done-gate (wm): {first}:\n\n" + "\n\n".join(blocking) + f"\n\n{advice}"
     wm_runtime.receipt("done_gate", payload, "deny", "; ".join(blocking)[:400])
     if handback:
@@ -172,6 +188,12 @@ def evaluate(root: Path, agent: str, message: str, status: str | None) -> Result
             "The gate couldn't snapshot the working tree (is another git process running?)."
         )
         return result
+    started_at = baseline.get("commit") if baseline.get("root") == str(root) else None
+    if started_at and wm_git.head_commit(root) != started_at:
+        result.integrity.append(
+            "HEAD moved while you worked, by a commit, reset or checkout: version control is the "
+            "lead's. Don't try to undo it; report what ran instead."
+        )
     changed = wm_git.changes(root, base, current)
     result.changed = len(changed)
     result.no_gates = not config["gates"] and not config["tests"]
@@ -199,7 +221,7 @@ def _integrity(
         result.integrity.append(
             "Changed lead-owned files (by any tool): "
             + ", ".join(owned[:10])
-            + ". Revert them, and report the change you need instead."
+            + ". Don't edit them back yourself: the lead restores them, or keeps the change."
         )
     deleted_tests = [
         p for s, p in changed if s == "D" and wm_config.matches_any(p, config["testGlobs"])
@@ -330,6 +352,12 @@ def _text(value: object) -> str:
     if isinstance(value, list):
         return "\n".join(_text(item) for item in value)
     return ""
+
+
+def _sent_back_for(agent: str) -> list[str] | None:
+    """The failures of `agent`'s last send-back, if its latest verdict is one."""
+    previous = wm_runtime.read_json(wm_runtime.state_file("verdict", agent)) or {}
+    return previous.get("failures") if previous.get("outcome") == "SENT_BACK" else None
 
 
 def _record_block(agent: str) -> int:

@@ -16,12 +16,45 @@ from collections.abc import Iterator
 from pathlib import Path
 
 
-def git(cwd: Path, *args: str, env: dict[str, str] | None = None) -> str | None:
-    """The command's stdout, or None if git failed or isn't installed."""
+def _timeout() -> float:
+    try:
+        return max(1.0, float(os.environ.get("WM_GIT_TIMEOUT") or 20))
+    except ValueError:
+        return 20.0
+
+
+# The seconds one git call may take. Claude Code lets an action through when a hook outlives its
+# own timeout (30 seconds for the shortest), so a git that hangs, on a stuck lock or a wrapper on
+# PATH that loops, has to fail here, where each hook applies its failure policy. WM_GIT_TIMEOUT
+# changes it; snapshot() gives `git add` four times as long, because it reads the whole tree.
+TIMEOUT_SECONDS = _timeout()
+
+
+class GitTimeoutError(Exception):
+    """Git didn't answer in time."""
+
+
+def git(
+    cwd: Path, *args: str, env: dict[str, str] | None = None, timeout: float = TIMEOUT_SECONDS
+) -> str | None:
+    """The command's stdout, or None if git failed or isn't installed. Raises GitTimeoutError if
+    git hangs."""
     try:
         completed = subprocess.run(
-            ["git", *args], cwd=cwd, capture_output=True, text=True, check=False, env=env
+            ["git", *args],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+            timeout=timeout,
         )
+    except subprocess.TimeoutExpired as error:
+        command = " ".join(args)[:80]
+        raise GitTimeoutError(
+            f"git {command} didn't answer within {timeout:g} seconds; "
+            "WM_GIT_TIMEOUT allows more for a slow repository"
+        ) from error
     except OSError:
         return None
     return completed.stdout if completed.returncode == 0 else None
@@ -45,7 +78,7 @@ def snapshot(root: Path) -> str | None:
         if index_path.exists():
             shutil.copyfile(index_path, temporary)  # keeps the stat cache, so `add` stays fast
         env = dict(os.environ, GIT_INDEX_FILE=str(temporary))
-        if git(root, "add", "--all", "--", ".", env=env) is None:
+        if git(root, "add", "--all", "--", ".", env=env, timeout=TIMEOUT_SECONDS * 4) is None:
             return None
         tree = git(root, "write-tree", env=env)
     return tree.strip() if tree else None
@@ -59,6 +92,12 @@ def is_tree(root: Path, object_id: str) -> bool:
 def head_tree(root: Path) -> str | None:
     tree = git(root, "rev-parse", "--verify", "--quiet", "HEAD^{tree}")
     return tree.strip() if tree else None
+
+
+def head_commit(root: Path) -> str | None:
+    """The commit HEAD points at, or None on a branch with no commits yet."""
+    commit = git(root, "rev-parse", "--verify", "--quiet", "HEAD")
+    return commit.strip() if commit else None
 
 
 def changes(root: Path, base: str, current: str) -> list[tuple[str, str]]:

@@ -40,6 +40,7 @@ SCRIPTS = (
     "session_context.py",
 )
 MIN_HANDBACK_VERSION = (2, 1, 271)
+MIN_GIT_VERSION = (2, 31)
 KNOWN_KEYS = {
     "$comment",
     "version",
@@ -82,6 +83,7 @@ def environment() -> list[str]:
         if missing
         else "✓ All hook scripts are present"
     )
+    lines.append(_git_line())
     version = _claude_version()
     if version is None:
         lines.append("! Couldn't read the Claude Code version (`claude --version`).")
@@ -211,6 +213,24 @@ def receipts_report() -> list[str]:
             *errors[-5:],
         ]
     return lines + [""]
+
+
+def _git_line() -> str:
+    try:
+        output = wm_git.git(Path.cwd(), "--version")
+    except wm_git.GitTimeoutError:
+        return (
+            f"✗ git didn't answer within {wm_git.TIMEOUT_SECONDS:g} seconds, so every hook that "
+            "reads the repository fails. A wrapper or shim for git on PATH may be looping; "
+            "`type -a git` lists them."
+        )
+    match = re.search(r"(\d+)\.(\d+)", output or "")
+    if not match:
+        return "✗ git didn't run: the hooks need it to find the repository and diff it."
+    version = (int(match.group(1)), int(match.group(2)))
+    if version < MIN_GIT_VERSION:
+        return f"! git {version[0]}.{version[1]} is older than 2.31, the oldest the hooks support."
+    return f"✓ git {version[0]}.{version[1]}"
 
 
 def _claude_version() -> tuple[int, ...] | None:

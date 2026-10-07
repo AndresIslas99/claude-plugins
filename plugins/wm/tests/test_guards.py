@@ -12,7 +12,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from support import Suite, make_repository, run_hook
+from support import Suite, hanging_git, make_repository, run_hook
 
 CONFIG = {
     "leadOwned": ["pyproject.toml", "config/*.toml", "infra/"],
@@ -108,6 +108,23 @@ def main() -> int:
             data=capped,
         )
         suite.equal("Fable beyond the session cap", over.decision, "deny")
+        hung = agent(
+            "with a git that hangs", {"subagent_type": "wm:scout"}, "exit-2", env=hanging_git(base)
+        )
+        suite.contains("it says why it blocked", hung.reason, "didn't answer within 2 seconds")
+        loose = run_hook(
+            "subagent_guard.py",
+            {
+                "agent_type": "wm:implementer",
+                "tool_name": "Write",
+                "tool_input": {"file_path": f"{r}/src/app.py"},
+                "cwd": r,
+            },
+            data=base / "data-hung",
+            policy="open",
+            env=hanging_git(base),
+        )
+        suite.equal("the write guard fails open when git hangs", loose.decision, "allow")
 
         def guard(
             agent_type: str,

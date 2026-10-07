@@ -115,6 +115,18 @@ def make_repository(
     return root
 
 
+def hanging_git(base: Path) -> dict[str, str]:
+    """An environment where `git` never answers, like a wrapper on PATH that loops, and where the
+    hooks give up on it after 2 seconds."""
+    directory = base / "hanging-git"
+    directory.mkdir(exist_ok=True)
+    script = directory / "git"
+    script.write_text("#!/bin/sh\nexec sleep 60\n")
+    script.chmod(0o755)
+    path = f"{directory}{os.pathsep}{os.environ.get('PATH', '')}"
+    return {"PATH": path, "WM_GIT_TIMEOUT": "2"}
+
+
 def state(data: Path, kind: str, key: str) -> dict[str, Any] | None:
     path = data / "state" / f"{kind}-{key}"
     return json.loads(path.read_text()) if path.exists() else None

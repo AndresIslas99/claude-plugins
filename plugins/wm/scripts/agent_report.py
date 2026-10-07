@@ -155,18 +155,16 @@ def verdict_note(agent_id: str) -> str:
     outcome = verdict.get("outcome")
     checked = ", ".join(f"`{c}`" for c in verdict.get("checked") or [])
     changed = verdict.get("changed", 0)
+    files = f"{changed} changed file{'' if changed == 1 else 's'}"
     lines = []
     if outcome == "PASSED":
         if not changed:
             lines.append("wm done-gate: PASSED. The implementer left no changes to check.")
         elif checked:
-            lines.append(
-                f"wm done-gate: PASSED. It checked {changed} changed files with {checked}."
-            )
+            lines.append(f"wm done-gate: PASSED. It checked {files} with {checked}.")
         else:
             lines.append(
-                f"wm done-gate: PASSED on integrity only. No configured gate covers the {changed} "
-                "changed files."
+                f"wm done-gate: PASSED on integrity only. No configured gate covers the {files}."
             )
         if verdict.get("no_gates_configured"):
             lines.append(
@@ -175,7 +173,7 @@ def verdict_note(agent_id: str) -> str:
             )
     elif outcome == "FAILING":
         lines.append(
-            "wm done-gate: FAILING after its retries. Don't accept or commit this as done. "
+            "wm done-gate: FAILING. Don't accept or commit this as done. "
             "Failures:\n" + "\n".join(verdict.get("failures") or [])
         )
     elif outcome in ("REPORTED_BLOCKED", "REPORTED_PARTIAL"):

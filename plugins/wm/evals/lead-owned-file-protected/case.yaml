@@ -1,0 +1,5 @@
+schema_version: "1.1"
+name: lead-owned-file-protected
+tags: [mechanism, implementer]
+context:
+  scaffold_script: fixture.sh

@@ -12,10 +12,11 @@ from __future__ import annotations
 
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
-from support import Suite, make_repository, run_hook, state
+from support import Suite, git, hanging_git, make_repository, run_hook, state
 
 FAKE_LINT = """\
 import pathlib, sys
@@ -43,8 +44,9 @@ class Case:
         self.root = make_repository(base / name, FILES, config)
         self.data = base / f"{name}-data"
         self.agent = f"agent-{name}"
+        self.env: dict[str, str] | None = None
 
-    def start(self) -> None:
+    def start(self) -> Any:
         payload = {
             "hook_event_name": "SubagentStart",
             "agent_id": self.agent,
@@ -54,7 +56,7 @@ class Case:
             "session_id": "s1",
             "transcript_path": "/dev/null",
         }
-        run_hook("baseline.py", payload, data=self.data, policy="open")
+        return run_hook("baseline.py", payload, data=self.data, policy="open", env=self.env)
 
     def write(self, name: str, content: str) -> None:
         path = self.root / name
@@ -72,7 +74,7 @@ class Case:
             "permission_mode": "auto",
             "session_id": "s1",
         }
-        return run_hook("done_gate.py", payload, data=self.data)
+        return run_hook("done_gate.py", payload, data=self.data, env=self.env)
 
     def stop(self, message: str) -> Any:
         payload = {
@@ -91,7 +93,7 @@ class Case:
             "stop_hook_active": False,
             "transcript_path": "/dev/null",
         }
-        return run_hook("done_gate.py", payload, data=self.data)
+        return run_hook("done_gate.py", payload, data=self.data, env=self.env)
 
     def verdict(self) -> dict[str, Any]:
         return state(self.data, "verdict", self.agent) or {}
@@ -170,6 +172,15 @@ def main() -> int:
             "a lead-owned file changed by any tool, even on BLOCKED", outcome.decision, "deny"
         )
         suite.contains("the reason names the file", outcome.reason, "CLAUDE.md")
+        suite.contains(
+            "and says what to do when it can't undo it", outcome.reason, "report STATUS: BLOCKED"
+        )
+        suite.equal(
+            "reporting BLOCKED on the same failure hands it to the lead at once",
+            case.handback("STATUS: BLOCKED\nSUMMARY: the formatter changed CLAUDE.md").decision,
+            "warn",
+        )
+        suite.equal("with a FAILING verdict", case.verdict().get("outcome"), "FAILING")
 
         case = Case(base, "lead-before")
         case.write("CLAUDE.md", "# Project\nThe lead's own edit, made before dispatch.\n")
@@ -280,6 +291,32 @@ def main() -> int:
         suite.equal(
             "a missing snapshot falls back to HEAD", case.handback("STATUS: DONE").decision, "deny"
         )
+
+        case = Case(base, "moved-head")
+        case.start()
+        case.write("src/new.py", "VALUE = 2\n")
+        git(case.root, "add", "src/new.py")  # as a script would, where the guard can't see it
+        git(case.root, "commit", "-q", "-m", "from a script")
+        moved = case.handback("STATUS: DONE")
+        suite.equal("a commit the guard couldn't see: the gate blocks", moved.decision, "deny")
+        suite.contains("and says HEAD moved", moved.reason, "HEAD moved while you worked")
+
+        case = Case(base, "hung-git")
+        case.start()
+        case.write("src/new.py", "VALUE = 2\n")
+        case.env = hanging_git(base)
+        started = time.monotonic()
+        hung = case.handback("STATUS: DONE")
+        suite.equal("a git that hangs: the gate blocks", hung.decision, "deny")
+        suite.contains("and says git didn't answer", hung.reason, "didn't answer within 2 seconds")
+        elapsed = time.monotonic() - started
+        suite.check("within the git timeout", elapsed < 15, f"took {elapsed:.1f} seconds")
+        case.handback("STATUS: DONE")
+        suite.equal(
+            "and converges like any broken check", case.handback("STATUS: DONE").decision, "warn"
+        )
+        suite.equal("with a FAILING verdict", case.verdict().get("outcome"), "FAILING")
+        suite.equal("the baseline fails open", case.start().decision, "allow")
 
         case = Case(base, "crash")
         crash = run_hook("done_gate.py", {"hook_event_name": "PreToolUse"}, data=case.data)

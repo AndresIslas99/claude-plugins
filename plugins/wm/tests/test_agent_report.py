@@ -77,6 +77,15 @@ def main() -> int:
         suite.contains("the cost comes from the whole run", passed.context, "cost about $2.00")
         suite.contains("the lead gets the PASSED verdict", passed.context, "wm done-gate: PASSED")
         suite.contains("and the cost", passed.context, "at list prices")
+        suite.contains("it counts the files", passed.context, "checked 2 changed files with")
+        (data / "state" / "verdict-a3").write_text(json.dumps(dict(verdict, changed=1)))
+        one = run_hook(
+            "agent_report.py",
+            payload(root, "wm:implementer", "a3", "claude-sonnet-5-5"),
+            data=data,
+            policy="open",
+        )
+        suite.contains("one file is singular", one.context, "checked 1 changed file with")
 
         none = run_hook(
             "agent_report.py",

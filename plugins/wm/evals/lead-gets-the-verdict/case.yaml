@@ -1,0 +1,5 @@
+schema_version: "1.1"
+name: lead-gets-the-verdict
+tags: [mechanism, implementer]
+context:
+  scaffold_script: fixture.sh

@@ -50,12 +50,22 @@ def handle(payload: dict[str, Any]) -> None:
         )
     if name == "fable-advisor" or "fable" in model:
         return _fable(payload, config, tool_input, name)
+    updated = dict(tool_input)
+    changes: list[str] = []
     override = wm_config.model_override(name, config) if name else None
     if override and not model:
-        wm_runtime.receipt("agent_gate", payload, "rewrite-model", f"{agent} -> {override}")
-        wm_runtime.pre_tool(
-            "allow", f"wm routes {agent} to {override}", dict(tool_input, model=override)
-        )
+        updated["model"] = override
+        changes.append(f"routes {agent} to {override}")
+    # A background launch returns before the implementer runs, so PostToolUse would reach the lead
+    # with no verdict (measured 2026-10-07). Parallel orders in their own worktrees stay background.
+    foreground = tool_input.get("run_in_background") is False
+    if name == "implementer" and tool_input.get("isolation") != "worktree" and not foreground:
+        updated["run_in_background"] = False
+        changes.append("runs the implementer in the foreground, so the lead gets its gate verdict")
+    if changes:
+        reason = "wm " + "; ".join(changes)
+        wm_runtime.receipt("agent_gate", payload, "rewrite", reason)
+        wm_runtime.pre_tool("allow", reason, updated)
 
 
 def _fable(

@@ -130,6 +130,22 @@ def main() -> int:
         suite.equal("its verdict", case.verdict().get("outcome"), "FAILING")
         suite.equal("its SubagentStop is skipped", case.stop("STATUS: DONE").decision, "allow")
 
+        case = Case(base, "history")
+        case.start()
+        case.write("src/broken.py", "LINT_ERROR = True\n")
+        case.handback("STATUS: DONE")
+        (case.root / "src" / "broken.py").unlink()
+        case.write("src/fixed.py", "FIXED = True\n")
+        suite.equal(
+            "after a fix the report passes", case.handback("STATUS: DONE").decision, "allow"
+        )
+        history = case.verdict().get("history") or []
+        suite.check(
+            "the verdict keeps the send-back",
+            len(history) == 1 and "fake_lint" in history[0][0],
+            str(history),
+        )
+
         case = Case(base, "stop")
         case.start()
         case.write("src/broken.py", "LINT_ERROR = True\n")

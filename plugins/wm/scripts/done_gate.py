@@ -302,17 +302,23 @@ def _verdict(
     result: Result,
     failures: list[str] | None = None,
 ) -> None:
+    path = wm_runtime.state_file("verdict", agent)
+    previous = wm_runtime.read_json(path) or {}
+    history = list(previous.get("history") or [])
+    if previous.get("outcome") == "SENT_BACK" and previous.get("failures"):
+        history.append(previous["failures"])
     record = {
         "outcome": outcome,
         "status": status,
         "failures": failures or [],
+        "history": history,
         "warnings": result.warnings,
         "checked": result.checked,
         "changed": result.changed,
         "no_gates_configured": result.no_gates,
         "t": time.time(),
     }
-    wm_runtime.write_json(wm_runtime.state_file("verdict", agent), record)
+    wm_runtime.write_json(path, record)
 
 
 def _text(value: object) -> str:

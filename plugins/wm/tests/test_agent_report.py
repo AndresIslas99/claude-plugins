@@ -54,13 +54,27 @@ def main() -> int:
         verdict = {"outcome": "PASSED", "checked": ["just lint"], "changed": 2, "warnings": []}
         (data / "state" / "verdict-a1").write_text(json.dumps(verdict))
 
+        transcript = base / "session-1.jsonl"
+        transcript.write_text("")
+        subagents = base / "session-1" / "subagents"
+        subagents.mkdir(parents=True)
+        message = {
+            "role": "assistant",
+            "id": "m1",
+            "usage": {"input_tokens": 10, "output_tokens": 100_000},
+        }
+        lines = [
+            {"message": message},
+            {"message": message},  # the same message logged twice is counted once
+            {"message": {"role": "assistant", "id": "m2", "usage": {"output_tokens": 100_000}}},
+        ]
+        (subagents / "agent-a1.jsonl").write_text("\n".join(json.dumps(line) for line in lines))
+
         prompt = "Carry out docs/work-orders/0007-add-rates.md. Follow your protocol."
-        passed = run_hook(
-            "agent_report.py",
-            payload(root, "wm:implementer", "a1", "claude-sonnet-5-5", prompt),
-            data=data,
-            policy="open",
-        )
+        with_transcript = payload(root, "wm:implementer", "a1", "claude-sonnet-5-5", prompt)
+        with_transcript["transcript_path"] = str(transcript)
+        passed = run_hook("agent_report.py", with_transcript, data=data, policy="open")
+        suite.contains("the cost comes from the whole run", passed.context, "cost about $2.00")
         suite.contains("the lead gets the PASSED verdict", passed.context, "wm done-gate: PASSED")
         suite.contains("and the cost", passed.context, "at list prices")
 
@@ -129,6 +143,36 @@ def main() -> int:
             "a Fable consult is counted for the session",
             (state(data, "fable", "s1") or {}).get("count"),
             1,
+        )
+
+        launched = payload(root, "wm:implementer", "a8", "claude-sonnet-5-5")
+        launched["tool_response"]["status"] = "async_launched"
+        running = run_hook("agent_report.py", launched, data=data, policy="open")
+        suite.contains(
+            "a background launch isn't reported as done", running.context, "still running"
+        )
+
+        quiet = {
+            "outcome": "PASSED",
+            "checked": [],
+            "changed": 0,
+            "warnings": [],
+            "history": [["`just lint` failed:\nx"]],
+        }
+        (data / "state" / "verdict-a9").write_text(json.dumps(quiet))
+        retried = run_hook(
+            "agent_report.py",
+            payload(root, "wm:implementer", "a9", "claude-sonnet-5-5"),
+            data=data,
+            policy="open",
+        )
+        suite.contains(
+            "no changes left is said plainly", retried.context, "left no changes to check"
+        )
+        suite.contains(
+            "and the send-backs are reported",
+            retried.context,
+            "sent back 1 time(s) first, for: `just lint` failed:",
         )
 
         receipts = [

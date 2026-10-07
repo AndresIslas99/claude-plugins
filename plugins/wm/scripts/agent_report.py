@@ -16,6 +16,7 @@ It fails open: it only informs.
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -34,6 +35,12 @@ PRICES = {
     "haiku": (1.0, 5.0, 0.10, 1.25),
 }
 WORK_ORDER = re.compile(r"[\w./-]*work-orders/[\w.-]+\.md")
+USAGE_FIELDS = (
+    "input_tokens",
+    "output_tokens",
+    "cache_read_input_tokens",
+    "cache_creation_input_tokens",
+)
 
 
 def handle(payload: dict[str, Any]) -> None:
@@ -45,9 +52,17 @@ def handle(payload: dict[str, Any]) -> None:
     name = wm_config.agent_name(subagent)
     agent_id = str(response.get("agentId") or "")
     resolved = str(response.get("resolvedModel") or "")
-    usage = response.get("usage") if isinstance(response.get("usage"), dict) else {}
+    status = str(response.get("status") or "")
+    finished = status in ("", "completed")
+    # The response's `usage` covers only the last message, so the run's cost comes from the
+    # subagent's own transcript when it can be read (measured 2026-10-07).
+    usage = transcript_usage(payload, agent_id) if finished else None
+    scope = "run"
+    if usage is None:
+        usage = response.get("usage") if isinstance(response.get("usage"), dict) else {}
+        scope = "last message"
     family = wm_config.model_family(resolved) if resolved else ""
-    cost = estimate_cost(family, usage)
+    cost = estimate_cost(family, usage) if finished else None
     order = WORK_ORDER.search(str(tool_input.get("prompt") or ""))
     wm_runtime.receipt(
         "agent_report",
@@ -55,16 +70,26 @@ def handle(payload: dict[str, Any]) -> None:
         "usage",
         subagent,
         subagent_id=agent_id,
+        status=status,
         resolved_model=resolved,
-        total_tokens=response.get("totalTokens"),
         duration_ms=response.get("totalDurationMs"),
         usage=usage,
+        usage_scope=scope,
         cost_usd_estimate=cost,
         work_order=order.group(0) if order else None,
     )
     if family in ("fable", "mythos"):
         _count_fable(str(payload.get("session_id") or "unknown"))
     if name is None:
+        return
+    if not finished:
+        if name == "implementer":
+            wm_runtime.emit(
+                _context(
+                    f"wm: {subagent} is still running (status: {status}), so its done-gate verdict "
+                    "isn't ready. Wait for its report, then run the gates yourself before accepting."
+                )
+            )
         return
 
     notes: list[str] = []
@@ -79,15 +104,45 @@ def handle(payload: dict[str, Any]) -> None:
     if name == "implementer":
         notes.append(verdict_note(agent_id))
     if cost is not None:
-        notes.append(f"wm: {subagent} cost about ${cost:.2f} at list prices ({resolved}).")
-    wm_runtime.emit(
-        {
-            "hookSpecificOutput": {
-                "hookEventName": "PostToolUse",
-                "additionalContext": "\n".join(notes),
-            }
-        }
-    )
+        where = "" if scope == "run" else ", last message only"
+        notes.append(f"wm: {subagent} cost about ${cost:.2f} at list prices ({resolved}{where}).")
+    wm_runtime.emit(_context("\n".join(notes)))
+
+
+def _context(text: str) -> dict[str, Any]:
+    return {"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": text}}
+
+
+def transcript_usage(payload: dict[str, Any], agent_id: str) -> dict[str, int] | None:
+    """The token counts of a subagent's whole run, summed from its transcript, which sits next to
+    the parent's: <session>/subagents/agent-<id>.jsonl. Each message is counted once."""
+    parent = payload.get("transcript_path")
+    if not isinstance(parent, str) or not parent.endswith(".jsonl") or not agent_id:
+        return None
+    path = Path(parent[: -len(".jsonl")]) / "subagents" / f"agent-{agent_id}.jsonl"
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    totals: dict[str, int] = {}
+    seen: set[str] = set()
+    for line in lines:
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        message = entry.get("message") if isinstance(entry, dict) else None
+        if not isinstance(message, dict) or not isinstance(message.get("usage"), dict):
+            continue
+        key = str(message.get("id") or entry.get("uuid") or len(seen))
+        if key in seen:
+            continue
+        seen.add(key)
+        for field in USAGE_FIELDS:
+            value = message["usage"].get(field)
+            if isinstance(value, int):
+                totals[field] = totals.get(field, 0) + value
+    return totals or None
 
 
 def verdict_note(agent_id: str) -> str:
@@ -98,13 +153,21 @@ def verdict_note(agent_id: str) -> str:
             "run. Run the gates yourself before accepting the work."
         )
     outcome = verdict.get("outcome")
-    checked = ", ".join(f"`{c}`" for c in verdict.get("checked") or []) or "no gate commands"
+    checked = ", ".join(f"`{c}`" for c in verdict.get("checked") or [])
+    changed = verdict.get("changed", 0)
     lines = []
     if outcome == "PASSED":
-        lines.append(
-            f"wm done-gate: PASSED. It checked {verdict.get('changed', 0)} changed files with "
-            f"{checked}."
-        )
+        if not changed:
+            lines.append("wm done-gate: PASSED. The implementer left no changes to check.")
+        elif checked:
+            lines.append(
+                f"wm done-gate: PASSED. It checked {changed} changed files with {checked}."
+            )
+        else:
+            lines.append(
+                f"wm done-gate: PASSED on integrity only. No configured gate covers the {changed} "
+                "changed files."
+            )
         if verdict.get("no_gates_configured"):
             lines.append(
                 "No gates are configured (.claude/working-model.json), so only integrity was "
@@ -126,6 +189,10 @@ def verdict_note(agent_id: str) -> str:
         )
     else:
         lines.append(f"wm done-gate: {outcome}.")
+    history = verdict.get("history") or []
+    if history:
+        reasons = "; ".join(failure.splitlines()[0] for round_ in history for failure in round_)
+        lines.append(f"It was sent back {len(history)} time(s) first, for: {reasons}")
     warnings = verdict.get("warnings") or []
     if warnings:
         lines.append("Review these in the diff: " + "; ".join(warnings))

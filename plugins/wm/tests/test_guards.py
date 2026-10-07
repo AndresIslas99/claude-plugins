@@ -57,7 +57,18 @@ def main() -> int:
         agent(
             "another agent on Fable", {"subagent_type": "general-purpose", "model": "fable"}, "ask"
         )
-        agent("wm:implementer", {"subagent_type": "wm:implementer"}, "allow")
+        implementer = agent("wm:implementer", {"subagent_type": "wm:implementer"}, "allow")
+        suite.equal(
+            "the implementer is moved to the foreground",
+            (implementer.updated_input or {}).get("run_in_background"),
+            False,
+        )
+        parallel = agent(
+            "parallel implementer",
+            {"subagent_type": "wm:implementer", "isolation": "worktree", "run_in_background": True},
+            "allow",
+        )
+        suite.equal("one in its own worktree stays in the background", parallel.updated_input, None)
         agent(
             "a wm agent starting an agent",
             {"subagent_type": "wm:scout"},

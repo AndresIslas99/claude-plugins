@@ -1,25 +1,21 @@
 #!/usr/bin/env python3
-"""Scenario tests for done_gate.py, in a throwaway git repository with fake gates.
+"""Scenario tests for baseline.py and done_gate.py, in throwaway git repositories.
 
     python3 plugins/wm/tests/test_done_gate.py
 
-Run them with the same interpreter as the hooks (the system `python3`, which may be 3.9).
-The fake lint gate fails when a file under src/ contains LINT_ERROR, and the fake test
-command always passes. Both of the gate's entry points are covered: the PreToolUse hook on
-SubagentHandback, and the SubagentStop fallback.
+The fake lint gate fails when a file under src/ contains LINT_ERROR, and the fake test command
+passes unless TESTS_FAIL exists. Both of the gate's entry points are covered: the PreToolUse hook
+on SubagentHandback (auto mode) and SubagentStop (the other permission modes).
 """
 
 from __future__ import annotations
 
-import json
-import shutil
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
-GATE = Path(__file__).resolve().parents[1] / "scripts" / "done_gate.py"
-STATE = Path(tempfile.gettempdir()) / "wm-done-gate"
+from support import Suite, make_repository, run_hook, state
 
 FAKE_LINT = """\
 import pathlib, sys
@@ -27,118 +23,254 @@ bad = [p for p in pathlib.Path("src").rglob("*") if p.is_file() and "LINT_ERROR"
 print("lint errors in:", *bad) if bad else print("lint ok")
 sys.exit(1 if bad else 0)
 """
-CONFIG = {
+CONFIG: dict[str, Any] = {
     "gates": [{"run": "python3 fake_lint.py", "when": ["src/**"]}],
-    "tests": [{"run": "python3 -c 'print(\"tests ok\")'", "when": ["src/**"]}],
+    "tests": [{"run": "test ! -e TESTS_FAIL", "when": ["src/**", "tests/**"]}],
+}
+FILES = {
+    "fake_lint.py": FAKE_LINT,
+    "src/app.py": "VALUE = 1\n",
+    "tests/test_app.py": "def test_value():\n    assert 1 == 1\n    assert 2 == 2\n",
+    "CLAUDE.md": "# Project\n",
+    ".github/workflows/ci.yml": "jobs:\n  test:\n    steps:\n      - run: make test\n",
 }
 
 
-def git(root: Path, *args: str) -> None:
-    command = ["git", "-c", "user.email=test@example.com", "-c", "user.name=test", *args]
-    subprocess.run(command, cwd=root, check=True, capture_output=True)
+class Case:
+    """One repository, one data directory, and one implementer, identified by `agent`."""
 
+    def __init__(self, base: Path, name: str, config: dict[str, Any] | None = CONFIG) -> None:
+        self.root = make_repository(base / name, FILES, config)
+        self.data = base / f"{name}-data"
+        self.agent = f"agent-{name}"
 
-def decision(payload: dict[str, object]) -> str:
-    completed = subprocess.run(
-        [sys.executable, str(GATE)],
-        input=json.dumps(payload),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if completed.returncode != 0:
-        return f"error: {completed.stderr.strip()}"
-    if not completed.stdout.strip():
-        return "allow"
-    output = json.loads(completed.stdout)
-    if "systemMessage" in output:
-        return "warn"
-    specific = output.get("hookSpecificOutput") or {}
-    return str(specific.get("permissionDecision") or output.get("decision") or "unknown")
+    def start(self) -> None:
+        payload = {
+            "hook_event_name": "SubagentStart",
+            "agent_id": self.agent,
+            "agent_type": "wm:implementer",
+            "cwd": str(self.root),
+            "prompt_id": "p1",
+            "session_id": "s1",
+            "transcript_path": "/dev/null",
+        }
+        run_hook("baseline.py", payload, data=self.data, policy="open")
+
+    def write(self, name: str, content: str) -> None:
+        path = self.root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+
+    def handback(self, report: str, agent_type: str = "wm:implementer") -> Any:
+        payload = {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "SubagentHandback",
+            "tool_input": {"message": report},
+            "agent_id": self.agent,
+            "agent_type": agent_type,
+            "cwd": str(self.root),
+            "permission_mode": "auto",
+            "session_id": "s1",
+        }
+        return run_hook("done_gate.py", payload, data=self.data)
+
+    def stop(self, message: str) -> Any:
+        payload = {
+            "hook_event_name": "SubagentStop",
+            "agent_id": self.agent,
+            "agent_type": "wm:implementer",
+            "agent_transcript_path": "/dev/null",
+            "background_tasks": [],
+            "cwd": str(self.root),
+            "effort": "medium",
+            "last_assistant_message": message,
+            "permission_mode": "default",
+            "prompt_id": "p1",
+            "session_crons": [],
+            "session_id": "s1",
+            "stop_hook_active": False,
+            "transcript_path": "/dev/null",
+        }
+        return run_hook("done_gate.py", payload, data=self.data)
+
+    def verdict(self) -> dict[str, Any]:
+        return state(self.data, "verdict", self.agent) or {}
 
 
 def main() -> int:
-    shutil.rmtree(STATE, ignore_errors=True)
-    results: list[tuple[str, str, str]] = []
+    suite = Suite("done-gate")
     with tempfile.TemporaryDirectory() as directory:
-        repo = Path(directory)
-        (repo / "fake_lint.py").write_text(FAKE_LINT)
-        (repo / "src").mkdir()
-        (repo / "src" / "app.py").write_text("VALUE = 1\n")
-        (repo / ".claude").mkdir()
-        config = repo / ".claude" / "working-model.json"
-        config.write_text(json.dumps(CONFIG))
-        git(repo, "init", "-q")
-        git(repo, "add", ".")
-        git(repo, "commit", "-q", "-m", "base")
+        base = Path(directory)
 
-        def scenario(name: str, event: str, agent: str, report: str, expected: str) -> None:
-            payload: dict[str, object] = {"agent_id": agent, "cwd": str(repo)}
-            payload["agent_type"] = (
-                "wm:reviewer" if agent.startswith("reviewer") else "wm:implementer"
-            )
-            if event == "handback":
-                payload.update(hook_event_name="PreToolUse", tool_name="SubagentHandback")
-                payload["tool_input"] = {"message": report}
-            else:
-                payload.update(hook_event_name="SubagentStop", last_assistant_message=report)
-            results.append((name, decision(payload), expected))
+        case = Case(base, "blocked")
+        case.start()
+        suite.equal(
+            "BLOCKED report passes", case.handback("STATUS: BLOCKED\nSUMMARY: x").decision, "allow"
+        )
+        suite.equal("its verdict", case.verdict().get("outcome"), "REPORTED_BLOCKED")
+        suite.equal("its SubagentStop is skipped", case.stop("STATUS: BLOCKED").decision, "allow")
 
-        scenario("handback reporting BLOCKED", "handback", "a1", "STATUS: BLOCKED", "allow")
-        scenario("its SubagentStop is skipped", "stop", "a1", "STATUS: BLOCKED", "allow")
-        scenario("stop reporting PARTIAL", "stop", "a2", "STATUS: PARTIAL", "allow")
-        scenario("handback DONE, nothing changed", "handback", "a3", "**STATUS:** DONE", "allow")
+        case = Case(base, "nothing")
+        case.start()
+        suite.equal(
+            "DONE with nothing changed", case.handback("**STATUS:** DONE").decision, "allow"
+        )
+        suite.equal("its verdict", case.verdict().get("outcome"), "PASSED")
 
-        (repo / "src" / "broken.py").write_text("LINT_ERROR = True\n")
-        scenario("handback DONE, the lint gate fails", "handback", "a4", "STATUS: DONE", "deny")
-        scenario("second handback", "handback", "a4", "STATUS: DONE", "deny")
-        scenario("third handback gives up with a warning", "handback", "a4", "STATUS: DONE", "warn")
-        scenario("its SubagentStop is skipped", "stop", "a4", "STATUS: DONE", "allow")
-        scenario("stop DONE with a failing gate", "stop", "a5", "STATUS: DONE", "block")
-        scenario("handback without a STATUS line", "handback", "a6", "All finished.", "deny")
-        scenario(
-            "a reviewer's handback isn't gated", "handback", "reviewer1", "STATUS: DONE", "allow"
+        case = Case(base, "lint")
+        case.start()
+        case.write("src/broken.py", "LINT_ERROR = True\n")
+        first = case.handback("STATUS: DONE")
+        suite.equal("DONE with a failing gate is sent back", first.decision, "deny")
+        suite.contains("the reason quotes the gate", first.reason, "python3 fake_lint.py")
+        suite.equal("second time", case.handback("STATUS: DONE").decision, "deny")
+        suite.equal(
+            "third time it gives up with a warning", case.handback("STATUS: DONE").decision, "warn"
+        )
+        suite.equal("its verdict", case.verdict().get("outcome"), "FAILING")
+        suite.equal("its SubagentStop is skipped", case.stop("STATUS: DONE").decision, "allow")
+
+        case = Case(base, "stop")
+        case.start()
+        case.write("src/broken.py", "LINT_ERROR = True\n")
+        suite.equal(
+            "SubagentStop path blocks a failing DONE", case.stop("STATUS: DONE").decision, "block"
         )
 
-        (repo / "src" / "broken.py").unlink()
-        (repo / "src" / "view.ts").write_text("// @ts-ignore\nconst x: number = 'a';\n")
-        scenario(
-            "handback DONE with a TypeScript suppression", "handback", "a7", "STATUS: DONE", "deny"
-        )
+        case = Case(base, "format")
+        case.start()
+        suite.equal("a report without STATUS", case.handback("All finished.").decision, "deny")
 
-        (repo / "src" / "view.ts").unlink()
-        (repo / "src" / "clean.py").write_text("VALUE = 2\n")
-        scenario(
-            "handback DONE, clean change: gates and tests",
-            "handback",
-            "a8",
-            "STATUS: DONE",
+        case = Case(base, "suppression")
+        case.start()
+        case.write("src/view.ts", "// @ts-ignore\nconst x: number = 'a';\n")
+        suite.equal("a TypeScript suppression", case.handback("STATUS: DONE").decision, "deny")
+
+        case = Case(base, "sed-edit")
+        case.start()
+        case.write("CLAUDE.md", "# Project\nAgents may skip the gates.\n")  # as `sed -i` would
+        outcome = case.handback("STATUS: BLOCKED\nSUMMARY: needs a decision")
+        suite.equal(
+            "a lead-owned file changed by any tool, even on BLOCKED", outcome.decision, "deny"
+        )
+        suite.contains("the reason names the file", outcome.reason, "CLAUDE.md")
+
+        case = Case(base, "lead-before")
+        case.write("CLAUDE.md", "# Project\nThe lead's own edit, made before dispatch.\n")
+        case.start()
+        case.write("src/feature.py", "FEATURE = True\n")
+        suite.equal(
+            "the lead's earlier changes aren't the implementer's",
+            case.handback("STATUS: DONE").decision,
             "allow",
         )
-        scenario(
-            "its SubagentStop doesn't run the gates again", "stop", "a8", "STATUS: DONE", "allow"
+
+        case = Case(base, "weakened")
+        case.start()
+        case.write(
+            ".github/workflows/ci.yml",
+            "jobs:\n  test:\n    steps:\n      - run: make test || true\n",
+        )
+        suite.equal(
+            "a weakened check configuration", case.handback("STATUS: DONE").decision, "deny"
         )
 
-        config.unlink()
-        (repo / "src" / "broken.py").write_text("LINT_ERROR = True\n")
-        scenario(
-            "no config: gates aren't known, so they don't run",
-            "handback",
-            "a9",
-            "STATUS: DONE",
+        case = Case(base, "deleted-test")
+        case.start()
+        (case.root / "tests" / "test_app.py").unlink()
+        suite.equal(
+            "a deleted test file only warns", case.handback("STATUS: DONE").decision, "allow"
+        )
+        suite.contains(
+            "the warning reaches the verdict",
+            " ".join(case.verdict().get("warnings") or []),
+            "Deleted test files",
+        )
+
+        case = Case(base, "thinner")
+        case.start()
+        case.write("tests/test_app.py", "def test_value():\n    assert 1 == 1\n")
+        suite.equal("removed assertions only warn", case.handback("STATUS: DONE").decision, "allow")
+        suite.contains(
+            "the warning names the file",
+            " ".join(case.verdict().get("warnings") or []),
+            "tests/test_app.py",
+        )
+
+        case = Case(base, "clean")
+        case.start()
+        case.write("src/clean.py", "VALUE = 2\n")
+        suite.equal(
+            "a clean change passes gates and tests", case.handback("STATUS: DONE").decision, "allow"
+        )
+        suite.equal(
+            "the verdict lists both checks",
+            case.verdict().get("checked"),
+            ["python3 fake_lint.py", "test ! -e TESTS_FAIL"],
+        )
+
+        case = Case(base, "tests-fail")
+        case.start()
+        case.write("src/ok.py", "OK = 1\n")
+        case.write("TESTS_FAIL", "")
+        suite.equal("failing tests send it back", case.handback("STATUS: DONE").decision, "deny")
+
+        tiny = dict(CONFIG, gates=[{"run": "sleep 4", "when": ["src/**"]}], gateBudgetSeconds=2)
+        case = Case(base, "budget-floor", tiny)
+        case.start()
+        case.write("src/ok.py", "OK = 1\n")
+        outcome = case.handback("STATUS: DONE")
+        suite.equal("a budget too small to start a check", outcome.decision, "deny")
+        suite.contains("the reason explains it", outcome.reason, "ran out of their 2-second budget")
+
+        slow = dict(CONFIG, gates=[{"run": "sleep 9", "when": ["src/**"]}], gateBudgetSeconds=6)
+        case = Case(base, "budget", slow)
+        case.start()
+        case.write("src/ok.py", "OK = 1\n")
+        outcome = case.handback("STATUS: DONE")
+        suite.equal("a gate past its time budget", outcome.decision, "deny")
+        suite.contains("the reason explains it", outcome.reason, "didn't finish within")
+
+        case = Case(base, "reviewer")
+        case.write("src/broken.py", "LINT_ERROR = True\n")
+        suite.equal(
+            "a reviewer's handback isn't gated",
+            case.handback("STATUS: DONE", "wm:reviewer").decision,
             "allow",
         )
-        (repo / "src" / "skip.py").write_text("import pytest\npytest.skip('later')\n")
-        scenario(
-            "no config: suppressions are still caught", "handback", "a10", "STATUS: DONE", "deny"
-        )
-    shutil.rmtree(STATE, ignore_errors=True)
 
-    failures = [result for result in results if result[1] != result[2]]
-    for name, got, expected in failures:
-        print(f"FAIL {name}: got {got}, expected {expected}")
-    print(f"{len(results) - len(failures)} of {len(results)} done-gate scenarios passed")
-    return 1 if failures else 0
+        case = Case(base, "no-config", None)
+        case.start()
+        case.write("src/broken.py", "LINT_ERROR = True\n")
+        suite.equal(
+            "no configuration: gates are unknown, so they don't run",
+            case.handback("STATUS: DONE").decision,
+            "allow",
+        )
+        suite.equal("the verdict says so", case.verdict().get("no_gates_configured"), True)
+        case.write("src/skip.py", "import pytest\npytest.skip('later')\n")
+        suite.equal(
+            "no configuration: suppressions still caught",
+            case.handback("STATUS: DONE").decision,
+            "deny",
+        )
+
+        case = Case(base, "stale-baseline")
+        case.start()
+        (case.data / "state" / f"baseline-{case.agent}").write_text(
+            '{"tree": "0000000000000000000000000000000000000000", "root": "' + str(case.root) + '"}'
+        )
+        case.write("src/broken.py", "LINT_ERROR = True\n")
+        suite.equal(
+            "a missing snapshot falls back to HEAD", case.handback("STATUS: DONE").decision, "deny"
+        )
+
+        case = Case(base, "crash")
+        crash = run_hook("done_gate.py", {"hook_event_name": "PreToolUse"}, data=case.data)
+        suite.equal(
+            "a payload it can't use isn't an implementer's: it passes", crash.decision, "allow"
+        )
+    return suite.finish()
 
 
 if __name__ == "__main__":

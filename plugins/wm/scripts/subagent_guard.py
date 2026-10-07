@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 """PreToolUse hook that keeps the wm agents within their roles.
 
-    subagent_guard.py [implementer | advisor | read-only]
+    subagent_guard.py [implementer | advisor | read-only | subagent]
 
-The role comes from the payload's `agent_type` (wm:implementer, wm:fable-advisor, and the
-read-only wm:reviewer, wm:scout and wm:researcher). An argument overrides it, as the tests do.
-Any other agent, and the main session, pass untouched.
+The role comes from the payload's `agent_type`: wm:implementer, wm:fable-advisor, and the
+read-only wm:reviewer, wm:scout and wm:researcher (the type Claude Code sends inside a plugin
+subagent is "wm:implementer", measured 2026-10-07). Another subagent that arrives without a type
+gets the "subagent" role: no git writes, dependency installs or destructive commands, and no
+other limits. The main session passes untouched. An argument overrides the role, as the tests do.
 
-The wm agents don't change version control, dependencies, secrets, remote systems or the
-machine's environment, and they write only where their role allows. Those are the lead's
-decisions; a denied agent reports the need instead. This guards against mistakes, not
-against an adversary: a determined shell command can get around a pattern list.
+This guards against mistakes, not against an adversary: a determined shell command can get
+around a pattern list. The done-gate checks the resulting diff as well, whatever tool made it.
+It fails open: if it breaks, the launcher lets the call through, and it leaves a receipt.
 """
 
 from __future__ import annotations
 
-import json
 import re
 import sys
 from pathlib import Path
@@ -23,6 +23,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import wm_config
+import wm_runtime
 
 # Git subcommands that only read. Every other subcommand changes the repository or a remote.
 READ_ONLY_GIT = frozenset(
@@ -58,6 +59,7 @@ GIT_INVOCATION = re.compile(
 
 BASH_RULES = (
     (r"--no-verify\b", "Git hooks are quality gates and are never skipped."),
+    (r"\bcore\.hooksPath\b", "Git hooks are quality gates and are never redirected."),
     (
         (
             r"\buv\s+(add|remove|lock)\b|\buv\s+pip\b|\bpip3?\s+install\b|\bpoetry\s+(add|remove)\b"
@@ -88,41 +90,37 @@ BASH_RULES = (
 )
 
 
-def main() -> int:
-    payload = json.load(sys.stdin)
-    role = (
-        sys.argv[1]
-        if len(sys.argv) > 1
-        else wm_config.role_for(str(payload.get("agent_type") or ""))
-    )
+def handle(payload: dict[str, Any]) -> None:
+    role = _role(payload)
     if role is None:
-        return 0
+        return
     cwd = Path(str(payload.get("cwd") or "."))
     root = wm_config.repository_root(cwd)
-    config = wm_config.load(root) if root is not None else wm_config.load(cwd)
+    config = wm_config.load(root)
     tool = str(payload.get("tool_name") or "")
     tool_input = payload.get("tool_input") or {}
 
     reason = None
     if tool == "Bash":
-        reason = _check_command(str(tool_input.get("command") or ""), config)
-    elif tool in ("Edit", "MultiEdit", "Write", "NotebookEdit"):
+        reason = check_command(str(tool_input.get("command") or ""), config)
+    elif tool in ("Edit", "MultiEdit", "Write", "NotebookEdit") and role != "subagent":
         path = str(tool_input.get("file_path") or tool_input.get("notebook_path") or "")
-        reason = _check_write(role, path, cwd, root, config)
-
+        reason = check_write(role, path, cwd, root, config)
     if reason:
-        output = {
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "deny",
-                "permissionDecisionReason": f"{reason} (wm guard)",
-            }
-        }
-        print(json.dumps(output))
-    return 0
+        wm_runtime.receipt("subagent_guard", payload, "deny", reason, role=role)
+        wm_runtime.pre_tool("deny", f"{reason} (wm guard)")
 
 
-def _check_command(command: str, config: dict[str, Any]) -> str | None:
+def _role(payload: dict[str, Any]) -> str | None:
+    if len(sys.argv) > 1:
+        return sys.argv[1]
+    agent_type = str(payload.get("agent_type") or "")
+    if agent_type:
+        return wm_config.role_for(agent_type)
+    return "subagent" if payload.get("agent_id") else None
+
+
+def check_command(command: str, config: dict[str, Any]) -> str | None:
     for match in GIT_INVOCATION.finditer(command):
         subcommand, action = match.group(2), match.group(3)
         if subcommand in READ_ONLY_GIT or action in READ_ONLY_ACTIONS.get(subcommand, ()):
@@ -140,7 +138,7 @@ def _check_command(command: str, config: dict[str, Any]) -> str | None:
     return None
 
 
-def _check_write(
+def check_write(
     role: str, path: str, cwd: Path, root: Path | None, config: dict[str, Any]
 ) -> str | None:
     if role == "read-only":
@@ -171,4 +169,4 @@ def _relative(target: Path, root: Path | None) -> str | None:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(wm_runtime.run("subagent_guard", handle, fail_closed=False))

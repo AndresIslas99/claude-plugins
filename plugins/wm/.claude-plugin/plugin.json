@@ -1,6 +1,6 @@
 {
   "name": "wm",
-  "version": "1.0.1",
+  "version": "2.0.0",
   "description": "Working model: Opus leads and decides, Sonnet implements precise work orders, Opus reviews, Fable advises on the hardest problems with the user's approval, Haiku searches. Hooks enforce the project's gates and each agent's limits.",
   "author": {
     "name": "Andres Islas"

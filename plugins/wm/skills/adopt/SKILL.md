@@ -2,6 +2,7 @@
 name: adopt
 description: Set up the wm working model in the current project, or upgrade an adopted one. Inspects the project, then creates with the user its CLAUDE.md working-model section, .claude/working-model.json (gates and lead-owned files), path-scoped rules from its existing decisions, the work-order and consult directories, and the project settings. Use it when starting a new project, or when the session's reminder says this project hasn't adopted the working model.
 argument-hint: "[upgrade]"
+disable-model-invocation: true
 ---
 
 # Adopt the working model

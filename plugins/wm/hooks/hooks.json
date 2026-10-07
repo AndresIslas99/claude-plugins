@@ -1,52 +1,80 @@
 {
-  "description": "wm working model: model routing, role guards for the wm agents, and the implementer's done-gate",
+  "description": "wm working model: model routing, role guards for the wm agents, the implementer's diff-based done-gate, and verdicts for the lead. Every hook runs through launch.sh, which applies its failure policy: gates fail closed, the rest fail open with a receipt.",
   "hooks": {
     "SessionStart": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/session_context.py\""
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/launch.sh\" open session_context.py",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "matcher": "^wm:implementer$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/launch.sh\" open baseline.py",
+            "timeout": 120
           }
         ]
       }
     ],
     "PreToolUse": [
       {
-        "matcher": "Agent|Task",
+        "matcher": "^(Agent|Task)$",
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/agent_gate.py\""
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/launch.sh\" closed agent_gate.py",
+            "timeout": 30
           }
         ]
       },
       {
-        "matcher": "Bash|Edit|MultiEdit|Write|NotebookEdit",
+        "matcher": "^(Bash|Edit|MultiEdit|Write|NotebookEdit)$",
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/subagent_guard.py\""
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/launch.sh\" open subagent_guard.py",
+            "timeout": 30
           }
         ]
       },
       {
-        "matcher": "SubagentHandback",
+        "matcher": "^SubagentHandback$",
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/done_gate.py\"",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/launch.sh\" closed done_gate.py",
             "timeout": 1800
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "^(Agent|Task)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/launch.sh\" open agent_report.py",
+            "timeout": 30
           }
         ]
       }
     ],
     "SubagentStop": [
       {
+        "matcher": "^wm:implementer$",
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/done_gate.py\"",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/launch.sh\" closed done_gate.py",
             "timeout": 1800
           }
         ]

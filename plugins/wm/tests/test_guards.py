@@ -1,20 +1,18 @@
 #!/usr/bin/env python3
 """Scenario tests for agent_gate.py and subagent_guard.py, in a throwaway git repository.
 
-    python3 plugins/wm/tests/test_guards.py
-
-Run them with the same interpreter as the hooks (the system `python3`, which may be 3.9).
+python3 plugins/wm/tests/test_guards.py
 """
 
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
-SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+from support import Suite, make_repository, run_hook
 
 CONFIG = {
     "leadOwned": ["pyproject.toml", "config/*.toml", "infra/"],
@@ -24,49 +22,33 @@ CONFIG = {
         "consults": "docs/consults",
         "decisions": "docs/adr",
     },
+    "models": {"researcher": "haiku"},
 }
 
 
-def decision(script: str, payload: dict[str, object]) -> str:
-    completed = subprocess.run(
-        [sys.executable, str(SCRIPTS / script)],
-        input=json.dumps(payload),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if completed.returncode != 0:
-        return f"error: {completed.stderr.strip()}"
-    if not completed.stdout.strip():
-        return "allow"
-    output = json.loads(completed.stdout)
-    specific = output.get("hookSpecificOutput") or {}
-    return str(specific.get("permissionDecision") or output.get("decision") or "unknown")
-
-
-def make_repository(root: Path, *, own_gate: bool = False) -> None:
-    subprocess.run(["git", "init", "-q", str(root)], check=True)
-    (root / ".claude").mkdir()
-    (root / ".claude" / "working-model.json").write_text(json.dumps(CONFIG))
-    if own_gate:
-        (root / ".claude" / "hooks").mkdir()
-        (root / ".claude" / "hooks" / "agent_gate.py").write_text("")
-
-
 def main() -> int:
-    results: list[tuple[str, str, str]] = []
+    suite = Suite("guard")
     with tempfile.TemporaryDirectory() as directory:
-        repo = Path(directory) / "repo"
-        legacy = Path(directory) / "legacy"
-        repo.mkdir()
-        legacy.mkdir()
-        make_repository(repo)
-        make_repository(legacy, own_gate=True)
+        base = Path(directory)
+        repo = make_repository(base / "repo", {"src/app.py": "VALUE = 1\n"}, CONFIG)
+        legacy = make_repository(base / "legacy", {".claude/hooks/agent_gate.py": ""})
         r = str(repo)
 
-        def agent(name: str, tool_input: dict[str, object], expected: str, cwd: str = r) -> None:
-            payload = {"tool_name": "Agent", "tool_input": tool_input, "cwd": cwd}
-            results.append((f"agent_gate: {name}", decision("agent_gate.py", payload), expected))
+        def agent(
+            name: str,
+            tool_input: dict[str, Any],
+            expected: str,
+            *,
+            env: dict[str, str] | None = None,
+            **extra: Any,
+        ) -> Any:
+            payload: dict[str, Any] = {"tool_name": "Agent", "tool_input": tool_input}
+            payload.update({"cwd": r, "session_id": "s1"}, **extra)
+            outcome = run_hook(
+                "agent_gate.py", payload, data=base / f"data-{len(suite.results)}", env=env
+            )
+            suite.equal(f"agent_gate {name}", outcome.decision, expected)
+            return outcome
 
         agent("Explore without a model", {"subagent_type": "Explore"}, "deny")
         agent("Explore on Opus", {"subagent_type": "Explore", "model": "opus"}, "deny")
@@ -76,29 +58,79 @@ def main() -> int:
             "another agent on Fable", {"subagent_type": "general-purpose", "model": "fable"}, "ask"
         )
         agent("wm:implementer", {"subagent_type": "wm:implementer"}, "allow")
-        agent("a project with its own gate", {"subagent_type": "Explore"}, "allow", str(legacy))
+        agent(
+            "a wm agent starting an agent",
+            {"subagent_type": "wm:scout"},
+            "deny",
+            agent_type="wm:implementer",
+        )
+        agent("a project with its own gate", {"subagent_type": "Explore"}, "allow", cwd=str(legacy))
 
-        def guard(agent_type: str, tool: str, tool_input: dict[str, object], expected: str) -> None:
-            payload = {
+        rewrite = agent("models.researcher", {"subagent_type": "wm:researcher"}, "allow")
+        suite.equal(
+            "models.researcher rewrites the call",
+            (rewrite.updated_input or {}).get("model"),
+            "haiku",
+        )
+        explicit = agent(
+            "explicit model", {"subagent_type": "wm:researcher", "model": "sonnet"}, "allow"
+        )
+        suite.equal("an explicit model is left alone", explicit.updated_input, None)
+        machine = agent(
+            "WM_MODELS", {"subagent_type": "wm:scout"}, "allow", env={"WM_MODELS": "scout=sonnet"}
+        )
+        suite.equal(
+            "WM_MODELS rewrites the scout", (machine.updated_input or {}).get("model"), "sonnet"
+        )
+
+        capped = base / "data-capped"
+        (capped / "state").mkdir(parents=True)
+        (capped / "state" / "fable-s1").write_text(json.dumps({"count": 3}))
+        over = run_hook(
+            "agent_gate.py",
+            {
+                "tool_name": "Agent",
+                "tool_input": {"subagent_type": "wm:fable-advisor"},
+                "cwd": r,
+                "session_id": "s1",
+            },
+            data=capped,
+        )
+        suite.equal("Fable beyond the session cap", over.decision, "deny")
+
+        def guard(
+            agent_type: str,
+            tool: str,
+            tool_input: dict[str, Any],
+            expected: str,
+            agent_id: str = "",
+        ) -> None:
+            payload: dict[str, Any] = {
                 "agent_type": agent_type,
                 "tool_name": tool,
                 "tool_input": tool_input,
                 "cwd": r,
             }
+            if agent_id:
+                payload["agent_id"] = agent_id
+            outcome = run_hook(
+                "subagent_guard.py", payload, data=base / "data-guard", policy="open"
+            )
+            who = agent_type or agent_id or "main session"
             shown = json.dumps(tool_input).replace(r, "<repo>")
-            got = decision("subagent_guard.py", payload)
-            results.append((f"guard: {agent_type or 'main session'} {tool} {shown}", got, expected))
+            suite.equal(f"guard {who} {tool} {shown}", outcome.decision, expected)
 
         for command, expected in (
             ("git status", "allow"),
             ("git -C src diff --stat", "allow"),
             ("rtk git log -5", "allow"),
+            ("git stash list", "allow"),
+            ("git stash show -p", "allow"),
             ("git commit -m x", "deny"),
             ("git stash", "deny"),
             ("git stash pop", "deny"),
-            ("git stash list", "allow"),
-            ("git stash show -p", "allow"),
             ("git push", "deny"),
+            ("git -c core.hooksPath=/dev/null commit -m x", "deny"),
             ("npm install left-pad", "deny"),
             ("uv add httpx", "deny"),
             ("cargo add serde", "deny"),
@@ -114,6 +146,8 @@ def main() -> int:
         guard("", "Bash", {"command": "git commit -m x"}, "allow")
         guard("other-plugin:implementer", "Bash", {"command": "git commit -m x"}, "allow")
         guard("wm:reviewer", "Bash", {"command": "git stash"}, "deny")
+        guard("", "Bash", {"command": "git commit -m x"}, "deny", agent_id="untyped-subagent")
+        guard("", "Write", {"file_path": f"{r}/CLAUDE.md"}, "allow", agent_id="untyped-subagent")
 
         for path, expected in (
             (f"{r}/src/app.py", "allow"),
@@ -138,12 +172,7 @@ def main() -> int:
         guard("wm:fable-advisor", "Write", {"file_path": f"{r}/src/app.py"}, "deny")
         guard("wm:scout", "Write", {"file_path": f"{r}/src/app.py"}, "deny")
         guard("", "Write", {"file_path": f"{r}/CLAUDE.md"}, "allow")
-
-    failures = [result for result in results if result[1] != result[2]]
-    for name, got, expected in failures:
-        print(f"FAIL {name}: got {got}, expected {expected}")
-    print(f"{len(results) - len(failures)} of {len(results)} guard scenarios passed")
-    return 1 if failures else 0
+    return suite.finish()
 
 
 if __name__ == "__main__":

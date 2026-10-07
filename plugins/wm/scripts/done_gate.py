@@ -1,16 +1,27 @@
 #!/usr/bin/env python3
-"""The implementer's done-gate: a work order isn't done while its gates fail.
+"""The implementer's done-gate: a work order isn't done while its checks fail.
 
-When wm:implementer's report claims STATUS: DONE (or has no status), this runs the project's
-gates for the changed files (`gates`, then `tests`, in .claude/working-model.json) and scans
-the added lines for gate suppressions. On a failure it sends the implementer back to work, so
-it fixes the cause or reports PARTIAL or BLOCKED honestly. That happens at most MAX_BLOCKS
-times per agent, so it can't loop forever.
+Two entry points run the same checks (measured 2026-10-07 on Claude Code 2.1.292):
+- In auto mode a subagent ends by calling SubagentHandback. This hook runs as PreToolUse on that
+  tool and denies the handback, because Claude Code discards a SubagentStop block that comes
+  after a handback.
+- In the other permission modes the subagent ends with plain text. This hook runs as SubagentStop
+  and blocks.
 
-Subagents end by calling the SubagentHandback tool with their report, and Claude Code
-discards a SubagentStop block that arrives after it ("turn ended by tool result", measured
-2026-10-06). So the gate runs as a PreToolUse hook on SubagentHandback and denies the
-handback; as a SubagentStop hook it covers a subagent that ends with plain text instead.
+The checks look at the implementer's own changes: the diff between the snapshot baseline.py took
+when it started and the working tree now, or HEAD when there's no snapshot.
+- Integrity is checked whatever the report says, and a failure always sends the implementer
+  back: lead-owned files changed by any tool, new gate suppressions, or check configuration
+  weakened (`|| true`, `continue-on-error`).
+- Quality is checked when the report claims DONE or has no status: the report's format, then the
+  project's gates for the changed files (`gates`, then `tests`, in .claude/working-model.json),
+  within a time budget.
+- Warnings never block, and go to the lead: deleted test files, and test files that lost more
+  assertions than they gained.
+
+The implementer is sent back at most MAX_BLOCKS times; after that the report passes with a
+FAILING verdict. Every outcome is written as a verdict, which agent_report.py hands to the lead.
+If the checks themselves break, that counts as a failure, so the gate still converges.
 """
 
 from __future__ import annotations
@@ -19,17 +30,20 @@ import json
 import re
 import subprocess
 import sys
-import tempfile
-from collections.abc import Iterator
+import time
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import wm_config
+import wm_git
+import wm_runtime
 
 MAX_BLOCKS = 2
 TAIL_LINES = 30
 DEFAULT_TIMEOUT_SECONDS = 600
+EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
 STATUS = re.compile(r"^\W*STATUS:\W*(DONE|BLOCKED|PARTIAL)\b", re.MULTILINE | re.IGNORECASE)
 
@@ -60,81 +74,173 @@ SUPPRESSIONS = (
     ((".go",), re.compile(r"//\s*nolint"), "`//nolint`"),
     ((".rs",), re.compile(r"#!?\[allow\("), "an `#[allow(...)]`"),
 )
+WEAKENING = re.compile(r"\|\|\s*true\b|continue-on-error:\s*true|--no-verify\b")
+ASSERTION = re.compile(
+    r"\bassert\b|\bexpect\s*\(|\bself\.assert\w*\s*\(|\bassert[A-Z]\w*\s*\(|\bt\.(Error|Fatal)"
+)
 
 
-def main() -> int:
-    payload = json.load(sys.stdin)
+class Result:
+    def __init__(self) -> None:
+        self.integrity: list[str] = []
+        self.quality: list[str] = []
+        self.warnings: list[str] = []
+        self.checked: list[str] = []
+        self.changed = 0
+        self.no_gates = False
+
+
+def handle(payload: dict[str, Any]) -> None:
     if wm_config.role_for(str(payload.get("agent_type") or "")) != "implementer":
-        return 0
+        return
     handback = payload.get("hook_event_name") == "PreToolUse"
     agent = str(payload.get("agent_id") or payload.get("session_id") or "unknown")
+    if not handback and _consume_pass(agent):
+        return  # the handback already went through this gate
     if handback:
         message = _text(payload.get("tool_input"))
-    elif _consume_pass(agent):
-        return 0  # the handback already went through this gate
     else:
         message = str(payload.get("last_assistant_message") or "") or _last_message(payload)
+    statuses = STATUS.findall(message)  # the last one counts, if the report quotes an earlier one
+    status = statuses[-1].upper() if statuses else None
 
-    failures = _check(message, Path(str(payload.get("cwd") or ".")))
-    if not failures:
+    root = wm_config.repository_root(Path(str(payload.get("cwd") or ".")))
+    if root is None:
+        _verdict(
+            agent, "UNCHECKED", status, Result(), ["not a git repository: nothing was checked"]
+        )
+        return
+    try:
+        result = evaluate(root, agent, message, status)
+    except Exception as error:  # noqa: BLE001 - a broken check counts as a failure, so the gate converges
+        result = Result()
+        result.integrity.append(f"The gate couldn't run its checks ({error}).")
+
+    claims_done = status not in ("BLOCKED", "PARTIAL")
+    blocking = result.integrity + (result.quality if claims_done else [])
+    if not blocking:
+        outcome = "PASSED" if claims_done else f"REPORTED_{status}"
+        _verdict(agent, outcome, status, result)
         if handback:
             _record_pass(agent)
-        return 0
+        wm_runtime.receipt("done_gate", payload, "pass", outcome, checked=result.checked)
+        return
 
-    if _record_block(agent) > MAX_BLOCKS:
+    blocks = _record_block(agent)
+    if blocks > MAX_BLOCKS:
+        _verdict(agent, "FAILING", status, result, blocking)
         if handback:
             _record_pass(agent)
         warning = (
             f"wm done-gate: the implementer finished with failing checks after {MAX_BLOCKS} "
-            "retries. Verify the gates before committing."
+            "retries. The lead has the details; verify before committing."
         )
-        print(json.dumps({"systemMessage": warning}))
-        return 0
+        wm_runtime.receipt("done_gate", payload, "gave-up", "; ".join(blocking)[:400])
+        wm_runtime.emit({"systemMessage": warning})
+        return
 
-    reason = (
-        "Done-gate (wm): your report claims DONE, but:\n\n"
-        + "\n\n".join(failures)
-        + "\n\nFix the causes without suppressing them, then end with your report again. "
-        "If you can't, report STATUS: PARTIAL (or BLOCKED) with the failing output."
+    _verdict(agent, "SENT_BACK", status, result, blocking)
+    first = "your report claims DONE, but" if claims_done else "before you hand back"
+    advice = (
+        "Fix the causes without suppressing them, then end with your report again. If you can't, "
+        "report STATUS: PARTIAL (or BLOCKED) with the failing output."
+        if claims_done
+        else "Revert those changes, then end with your report again."
     )
+    reason = f"Done-gate (wm): {first}:\n\n" + "\n\n".join(blocking) + f"\n\n{advice}"
+    wm_runtime.receipt("done_gate", payload, "deny", "; ".join(blocking)[:400])
     if handback:
-        decision: dict[str, Any] = {
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "deny",
-                "permissionDecisionReason": reason,
-            }
-        }
+        wm_runtime.pre_tool("deny", reason)
     else:
-        decision = {"decision": "block", "reason": reason}
-    print(json.dumps(decision))
-    return 0
+        wm_runtime.emit({"decision": "block", "reason": reason})
 
 
-def _check(message: str, cwd: Path) -> list[str]:
-    """What stands between the report and DONE; empty when nothing does."""
-    statuses = STATUS.findall(message)  # the last one counts, if the report quotes an earlier one
-    status = statuses[-1].upper() if statuses else None
-    if status in ("BLOCKED", "PARTIAL"):
-        return []  # an honest report: the lead takes it from here
-    root = wm_config.repository_root(cwd)
-    if root is None:
-        return []
-    tracked = _git(root, "diff", "--name-only", "HEAD").splitlines()
-    untracked = _git(root, "ls-files", "--others", "--exclude-standard").splitlines()
-    changed = sorted({path for path in tracked + untracked if path})
-
-    failures: list[str] = []
-    if message and not status:
-        failures.append(
+def evaluate(root: Path, agent: str, message: str, status: str | None) -> Result:
+    result = Result()
+    config = wm_config.load(root)
+    baseline = wm_runtime.read_json(wm_runtime.state_file("baseline", agent)) or {}
+    base = baseline.get("tree") if baseline.get("root") == str(root) else None
+    if base and not wm_git.is_tree(root, str(base)):
+        result.warnings.append(
+            "The implementer's starting snapshot was missing, so its changes were compared with HEAD."
+        )
+        base = None
+    base = base or wm_git.head_tree(root) or EMPTY_TREE
+    current = wm_git.snapshot(root)
+    if current is None:
+        result.integrity.append(
+            "The gate couldn't snapshot the working tree (is another git process running?)."
+        )
+        return result
+    changed = wm_git.changes(root, base, current)
+    result.changed = len(changed)
+    result.no_gates = not config["gates"] and not config["tests"]
+    _integrity(root, base, current, changed, config, result)
+    if message and status is None:
+        result.quality.append(
             "Your reply doesn't end with the report from your instructions "
             "(STATUS: DONE | BLOCKED | PARTIAL, then SUMMARY, FILES, ...)."
         )
-    if changed:
-        config = wm_config.load(root)
-        failures += _suppressions(root, untracked)
-        failures += _run_gates(root, changed, config)
-    return failures
+    if status not in ("BLOCKED", "PARTIAL") and changed:
+        _run_gates(root, [path for _, path in changed], config, result)
+    return result
+
+
+def _integrity(
+    root: Path,
+    base: str,
+    current: str,
+    changed: list[tuple[str, str]],
+    config: dict[str, Any],
+    result: Result,
+) -> None:
+    owned = sorted({path for _, path in changed if wm_config.lead_owned_reason(path, config)})
+    if owned:
+        result.integrity.append(
+            "Changed lead-owned files (by any tool): "
+            + ", ".join(owned[:10])
+            + ". Revert them, and report the change you need instead."
+        )
+    deleted_tests = [
+        p for s, p in changed if s == "D" and wm_config.matches_any(p, config["testGlobs"])
+    ]
+    if deleted_tests:
+        result.warnings.append("Deleted test files: " + ", ".join(deleted_tests[:10]))
+
+    suppressions: list[str] = []
+    weakened: list[str] = []
+    added: Counter[str] = Counter()
+    removed: Counter[str] = Counter()
+    for sign, path, text in wm_git.line_changes(root, base, current):
+        is_test = wm_config.matches_any(path, config["testGlobs"])
+        if sign == "-":
+            if is_test and ASSERTION.search(text):
+                removed[path] += 1
+            continue
+        if is_test and ASSERTION.search(text):
+            added[path] += 1
+        if not path.startswith(".claude/"):  # rules and hooks spell out these patterns
+            for extensions, pattern, label in SUPPRESSIONS:
+                if path.endswith(extensions) and pattern.search(text):
+                    suppressions.append(f"- {path} adds {label}: `{text.strip()[:100]}`")
+                    break
+        if wm_config.matches_any(path, config["checkGlobs"]) and WEAKENING.search(text):
+            weakened.append(f"- {path}: `{text.strip()[:100]}`")
+    if suppressions:
+        result.integrity.append(
+            "New gate suppressions (only the lead adds one, with the reason in a comment):\n"
+            + "\n".join(suppressions[:20])
+        )
+    if weakened:
+        result.integrity.append(
+            "Weakened check configuration (only the lead changes how checks run):\n"
+            + "\n".join(weakened[:20])
+        )
+    thinner = sorted(p for p in removed if removed[p] > added.get(p, 0) and p not in deleted_tests)
+    if thinner:
+        result.warnings.append(
+            "Test files that lost more assertions than they gained: " + ", ".join(thinner[:10])
+        )
 
 
 def _applicable(entries: list[dict[str, Any]], changed: list[str]) -> list[dict[str, Any]]:
@@ -147,23 +253,29 @@ def _applicable(entries: list[dict[str, Any]], changed: list[str]) -> list[dict[
     return result
 
 
-def _run_gates(root: Path, changed: list[str], config: dict[str, Any]) -> list[str]:
-    failures = [
-        failure for entry in _applicable(config["gates"], changed) if (failure := _run(root, entry))
-    ]
-    if not failures:  # the slow checks run only when the fast ones pass
-        failures = [
-            failure
-            for entry in _applicable(config["tests"], changed)
-            if (failure := _run(root, entry))
-        ]
-    return failures
+def _run_gates(root: Path, changed: list[str], config: dict[str, Any], result: Result) -> None:
+    deadline = time.monotonic() + config["gateBudgetSeconds"]
+    for group in ("gates", "tests"):  # the slow checks run only when the fast ones pass
+        for entry in _applicable(config[group], changed):
+            remaining = int(deadline - time.monotonic())
+            if remaining < 5:
+                result.quality.append(
+                    f"The checks ran out of their {config['gateBudgetSeconds']}-second budget "
+                    f"before `{entry['run']}` (gateBudgetSeconds in .claude/working-model.json)."
+                )
+                return
+            failure = _run(root, entry, remaining)
+            result.checked.append(str(entry["run"]))
+            if failure:
+                result.quality.append(failure)
+        if result.quality:
+            return
 
 
-def _run(root: Path, entry: dict[str, Any]) -> str | None:
+def _run(root: Path, entry: dict[str, Any], remaining: int) -> str | None:
     command = str(entry["run"])
-    timeout = entry.get("timeout") if isinstance(entry.get("timeout"), int) else None
-    timeout = timeout or DEFAULT_TIMEOUT_SECONDS
+    own = entry.get("timeout") if isinstance(entry.get("timeout"), int) else DEFAULT_TIMEOUT_SECONDS
+    timeout = max(1, min(own, remaining))
     try:
         completed = subprocess.run(
             ["bash", "-c", command],
@@ -183,40 +295,24 @@ def _run(root: Path, entry: dict[str, Any]) -> str | None:
     return f"`{command}` failed:\n" + "\n".join(output)
 
 
-def _suppressions(root: Path, untracked: list[str]) -> list[str]:
-    found: list[str] = []
-    for path, text in _added_lines(root, untracked):
-        if path.startswith(".claude/"):
-            continue  # hooks and rules spell out the patterns they look for
-        for extensions, pattern, label in SUPPRESSIONS:
-            if path.endswith(extensions) and pattern.search(text):
-                found.append(f"- {path} adds {label}: `{text.strip()[:100]}`")
-                break
-    if not found:
-        return []
-    return [
-        "New gate suppressions (only the lead adds one, with the reason in a comment):\n"
-        + "\n".join(found[:20])
-    ]
-
-
-def _added_lines(root: Path, untracked: list[str]) -> Iterator[tuple[str, str]]:
-    path = None
-    diff = _git(root, "diff", "--unified=0", "--no-color", "--no-ext-diff", "HEAD")
-    for line in diff.splitlines():
-        if line.startswith("+++ "):
-            path = line[len("+++ b/") :] if line.startswith("+++ b/") else None
-        elif line.startswith("+") and path is not None:
-            yield path, line[1:]
-    for name in untracked:
-        file = root / name
-        try:
-            if file.stat().st_size > 1_000_000:
-                continue
-            for text in file.read_text(encoding="utf-8").splitlines():
-                yield name, text
-        except (OSError, UnicodeDecodeError):
-            continue
+def _verdict(
+    agent: str,
+    outcome: str,
+    status: str | None,
+    result: Result,
+    failures: list[str] | None = None,
+) -> None:
+    record = {
+        "outcome": outcome,
+        "status": status,
+        "failures": failures or [],
+        "warnings": result.warnings,
+        "checked": result.checked,
+        "changed": result.changed,
+        "no_gates_configured": result.no_gates,
+        "t": time.time(),
+    }
+    wm_runtime.write_json(wm_runtime.state_file("verdict", agent), record)
 
 
 def _text(value: object) -> str:
@@ -232,33 +328,23 @@ def _text(value: object) -> str:
 
 def _record_block(agent: str) -> int:
     """Count one more block for `agent` and return the new count."""
-    counter = _state_file(agent, "count")
-    try:
-        count = int(counter.read_text()) + 1
-    except (OSError, ValueError):
-        count = 1
-    counter.write_text(str(count))
+    path = wm_runtime.state_file("blocks", agent)
+    count = int((wm_runtime.read_json(path) or {}).get("count") or 0) + 1
+    wm_runtime.write_json(path, {"count": count})
     return count
 
 
 def _record_pass(agent: str) -> None:
-    """Remember that `agent`'s handback passed, so its SubagentStop doesn't run the gates again."""
-    _state_file(agent, "passed").touch()
+    """Remember that `agent`'s handback passed, so its SubagentStop doesn't run the checks again."""
+    wm_runtime.write_json(wm_runtime.state_file("passed", agent), {"t": time.time()})
 
 
 def _consume_pass(agent: str) -> bool:
-    marker = _state_file(agent, "passed")
-    if not marker.exists():
+    path = wm_runtime.state_file("passed", agent)
+    if not path.exists():
         return False
-    marker.unlink()
+    path.unlink()
     return True
-
-
-def _state_file(agent: str, kind: str) -> Path:
-    state = Path(tempfile.gettempdir()) / "wm-done-gate"
-    state.mkdir(exist_ok=True)
-    name = re.sub(r"[^\w.-]", "_", agent)  # outside the f-string: Python 3.9 runs these hooks
-    return state / f"{name}.{kind}"
 
 
 def _last_message(payload: dict[str, Any]) -> str:
@@ -291,15 +377,5 @@ def _last_message(payload: dict[str, Any]) -> str:
     return ""
 
 
-def _git(cwd: Path, *args: str) -> str:
-    try:
-        completed = subprocess.run(
-            ["git", *args], cwd=cwd, capture_output=True, text=True, check=False
-        )
-    except OSError:
-        return ""
-    return completed.stdout if completed.returncode == 0 else ""
-
-
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(wm_runtime.run("done_gate", handle, fail_closed=True))

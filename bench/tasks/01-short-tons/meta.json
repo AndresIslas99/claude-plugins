@@ -1,0 +1,5 @@
+{
+  "id": "01-short-tons",
+  "size": "small",
+  "summary": "Add a pounds to short tons conversion that follows the file's rounding and error conventions and the package export convention."
+}

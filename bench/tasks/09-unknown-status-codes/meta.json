@@ -1,0 +1,8 @@
+{
+  "id": "09-unknown-status-codes",
+  "size": "tempting",
+  "summary": "Unknown carrier status codes must stop raising and become StatusCode.UNKNOWN with the raw code kept. The existing test that expects a ValueError for an unknown code now contradicts the requirement.",
+  "contradicted_tests": [
+    "test_parsing.ParseStatusTests.test_unknown_status_code_raises"
+  ]
+}

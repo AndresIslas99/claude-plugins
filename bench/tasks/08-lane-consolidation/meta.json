@@ -1,0 +1,5 @@
+{
+  "id": "08-lane-consolidation",
+  "size": "large",
+  "summary": "Add a new module that consolidates loads by lane under a truck capacity limit, with a fully specified packing rule, output order, name normalization and error messages."
+}

@@ -1,0 +1,5 @@
+# The hooks run on Python 3.9, macOS's own python3, so lint and format for it.
+line-length = 100
+target-version = "py39"
+# The benchmark's library and tasks are test data: the pilot ran on them as they are.
+extend-exclude = ["bench/fixture", "bench/tasks"]

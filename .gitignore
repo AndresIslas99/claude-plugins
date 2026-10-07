@@ -1,3 +1,6 @@
 __pycache__/
 *.pyc
 .DS_Store
+.ruff_cache/
+# claude plugin eval writes its HTML reports here; the README records the results.
+plugins/wm/evals/results/

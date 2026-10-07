@@ -1,0 +1,7 @@
+# Weekly updates for the pinned GitHub Actions, so the SHA pins don't go stale silently.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

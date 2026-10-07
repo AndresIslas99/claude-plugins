@@ -1,0 +1,63 @@
+# The plugins' hook tests and manifest validation, on every push and pull request.
+# Actions are pinned to full commit SHAs with the version in a comment; Dependabot proposes updates.
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  hooks:
+    name: hooks on ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, python: "3.9", label: "Python 3.9" }
+          - { os: ubuntu-24.04, python: "3.14", label: "Python 3.14" }
+          # The interpreter the hooks really run on for most users: macOS's own python3 (3.9).
+          - { os: macos-15, python: system, label: "macOS system Python" }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: matrix.python != 'system'
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Run the hook tests
+        env:
+          PYTHON_CHOICE: ${{ matrix.python }}
+        run: |
+          if [ "$PYTHON_CHOICE" = system ]; then WM_PYTHON=/usr/bin/python3; else WM_PYTHON=$(command -v python3); fi
+          export WM_PYTHON
+          "$WM_PYTHON" --version
+          cd plugins/wm/tests
+          for suite in test_launcher test_manifest test_guards test_agent_report test_done_gate; do
+            "$WM_PYTHON" "$suite.py"
+          done
+
+  validate:
+    name: validate manifests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Install Claude Code (pinned)
+        run: npm install --global @anthropic-ai/claude-code@2.1.292
+      - name: Validate the marketplace and the plugin
+        run: |
+          claude plugin validate --strict .
+          claude plugin validate --strict plugins/wm

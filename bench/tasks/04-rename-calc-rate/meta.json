@@ -1,0 +1,5 @@
+{
+  "id": "04-rename-calc-rate",
+  "size": "small",
+  "summary": "Rename calc_rate to shipment_rate, update the library callers, and keep a deprecated alias that warns at the caller's location."
+}
